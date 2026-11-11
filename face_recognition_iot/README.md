@@ -2,7 +2,13 @@
 
 This is a separate camera client. The main Flask application remains the source of truth for people, face-registration status, and attendance records. This component keeps camera frames and face templates in memory only; it does not record video or save face images locally. Face-image enrollment files stay in the main backend until an embedding is registered.
 
-## Run on Windows
+## Run on the Raspberry Pi (production)
+
+The station opens the camera with **Picamera2**, so it runs on a Raspberry Pi with a Camera Module (Raspberry Pi OS). Use [`raspberry_pi/README_RASPBERRY_PI.md`](raspberry_pi/README_RASPBERRY_PI.md): `setup_pi.sh` installs it, connects it to your online Smart Library server over HTTPS, starts it at boot and opens it full-screen in Chromium.
+
+## Run on Windows (old webcam instructions)
+
+> These commands predate the Picamera2 camera code and will fail on Windows with `No module named 'picamera2'`. Kept for reference.
 
 For the complete integrated, step-by-step setup (including the main backend, shared key, sign-in, and troubleshooting), see the [Smart Library System run guide](../README.md#step-by-step-run-locally-on-windows).
 

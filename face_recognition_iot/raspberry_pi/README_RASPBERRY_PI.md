@@ -8,7 +8,7 @@ watch attendance from any device.
 
 ## What you need
 
-- Raspberry Pi 4 or 5 (a Pi 3 can work but will be slow), power supply, microSD card, screen.
+- Raspberry Pi 4 or 5 recommended. A **Pi 3B (1 GB)** works but recognition is slow (expect only a few frames per second, so stand still for a second or two). Power supply (official, so the Pi is not under-volted), microSD card, screen.
 - Raspberry Pi Camera Module connected with the ribbon cable (power off while connecting).
 - **Raspberry Pi OS 64-bit with desktop** (Bookworm or newer), connected to the internet.
 - Your server address (`https://library...`) and the IoT key from the server
@@ -42,7 +42,8 @@ watch attendance from any device.
   station answers, then opens Chromium full-screen (`--kiosk`) at `http://127.0.0.1:5001/`.
 - Desktop auto-login is enabled with `raspi-config` (System Options > Boot / Auto Login > Desktop Autologin),
   and screen blanking is turned off.
-- Older Raspberry Pi OS (Bullseye, X11) does not use labwc: add `@~/smart-library/face_recognition_iot/raspberry_pi/kiosk.sh`
+- `setup_pi.sh` registers the kiosk for both desktop types (labwc/Wayland and the X11 LXDE session used on Pi 3 and older images); the kiosk script runs only one copy, so having both is harmless. Check which you have with `echo $XDG_SESSION_TYPE` (`wayland` or `x11`).
+- Manual X11 set-up (if the script's line is missing): copy `/etc/xdg/lxsession/LXDE-pi/autostart` to `~/.config/lxsession/LXDE-pi/autostart` and add the `kiosk.sh` line. Older Raspberry Pi OS (Bullseye, X11) does not use labwc: add `@~/smart-library/face_recognition_iot/raspberry_pi/kiosk.sh`
   to a copy of `/etc/xdg/lxsession/LXDE-pi/autostart` in `~/.config/lxsession/LXDE-pi/autostart`
   (copy the system file first so the desktop panel keeps working).
 
@@ -81,7 +82,7 @@ The Pi refreshes the list of registered faces every 30 seconds.
 | "Library API returned 401" | The key on the Pi differs from the server's. Copy it again from the VPS and restart the station. |
 | `numpy` / `simplejpeg` import errors after installing | Re-run `~/smart-library/face_recognition_iot/.venv/bin/pip install "numpy<2"` and restart the station. |
 | Model download fails | Needs internet on first start. Restart the station when connected. |
-| Browser does not open at boot | `cat ~/.config/labwc/autostart` should contain the `kiosk.sh` line; check desktop auto-login (`sudo raspi-config`). Run `kiosk.sh` by hand to see errors. |
+| Browser does not open at boot | `cat ~/.config/labwc/autostart` (Wayland) or `~/.config/lxsession/LXDE-pi/autostart` (X11) should contain the `kiosk.sh` line; check desktop auto-login (`sudo raspi-config`). Run `kiosk.sh` by hand to see errors. |
 | Person not recognized | Better lighting, face the camera, re-upload a clearer front-facing photo. |
 | Sends two records / wrong action | Confirm mode: check the selected Time-in/Time-out. Auto mode: lengthen `SMART_LIBRARY_AUTO_COOLDOWN`. |
 

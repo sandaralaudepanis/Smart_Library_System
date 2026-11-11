@@ -79,6 +79,13 @@ mkdir -p "$HOME/.config/labwc"
 AUTOSTART="$HOME/.config/labwc/autostart"
 touch "$AUTOSTART"
 grep -qF "$HERE/kiosk.sh" "$AUTOSTART" || echo "\"$HERE/kiosk.sh\" &" >> "$AUTOSTART"
+# X11 desktop (e.g. Pi 3 / older images): LXDE session autostart. Copy the system file first so the panel keeps working.
+if [ -f /etc/xdg/lxsession/LXDE-pi/autostart ]; then
+    XAUTO="$HOME/.config/lxsession/LXDE-pi/autostart"
+    mkdir -p "$(dirname "$XAUTO")"
+    [ -f "$XAUTO" ] || cp /etc/xdg/lxsession/LXDE-pi/autostart "$XAUTO"
+    grep -qF "$HERE/kiosk.sh" "$XAUTO" || echo "@$HERE/kiosk.sh" >> "$XAUTO"
+fi
 sudo raspi-config nonint do_boot_behaviour B4 || echo "    Could not set desktop auto-login; set it in: sudo raspi-config > System Options > Boot / Auto Login."
 sudo raspi-config nonint do_blanking 1 || true
 

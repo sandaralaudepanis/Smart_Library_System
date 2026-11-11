@@ -1,10 +1,67 @@
 # Smart Library System
 
-The existing HTML and CSS are served by Flask, which also provides the SQLite-backed API.
+Web-based library system for Pateros Technological College with two main features:
+
+1. **Face-recognition attendance** - a Raspberry Pi with a Camera Module recognizes registered people and records Time-in / Time-out.
+2. **Barcode-based book transactions** - librarians scan book barcodes to borrow and return books.
+
+The existing HTML and CSS are served by Flask, which also provides the API. The database is SQLite by default and PostgreSQL when `DATABASE_URL` is set.
+
+```
+Raspberry Pi + Camera --HTTPS + IoT key--> Hostinger VPS (Nginx > Gunicorn > Flask > database)
+                                                    ^
+Librarian / MIS Admin (any device, any network) -HTTPS
+```
+
+## Contents
+
+- [Deploy online (Hostinger VPS + Raspberry Pi)](#deploy-online-hostinger-vps--raspberry-pi) - the normal way to use the system
+- [Run locally on Windows](#step-by-step-run-locally-on-windows) - for development and testing only
+- [Staff accounts](#development-staff-accounts), [roles](#roles-and-api), [password recovery](#librarian-password-recovery)
+- [Face Recognition / IoT](#face-recognition--iot) and [book barcodes and borrowing](#book-barcodes-and-borrowing)
+
+## Project structure
+
+| Path | Purpose |
+|---|---|
+| `backend/` | Flask app (`app.py`), database layer (`database.py`), server-side face enrollment |
+| `LogIn.html`, `welcome.html`, ... | Public pages (login, email verification, password change) |
+| `MIS_ADMIN/`, `LIBRARIAN/` | Role-specific dashboards, attendance (Time In/Out), book transactions, reports |
+| `app.js` | Shared front-end code; calls the API with relative paths (`/api/...`), so no URL changes are needed when deployed |
+| `face_recognition_iot/` | Camera station that runs on the Raspberry Pi (or a PC webcam for testing) |
+| `face_recognition_iot/raspberry_pi/` | Pi setup script, systemd service, full-screen browser (kiosk) script |
+| `deploy/hostinger/` | VPS setup script, Nginx and systemd files, backup script, deployment guide |
+
+## Deploy online (Hostinger VPS + Raspberry Pi)
+
+Once deployed, the librarian only needs a browser: nothing has to run on their computer, and the Pi can be on a different network because it only makes outgoing HTTPS connections.
+
+1. **Server:** follow [`deploy/hostinger/DEPLOY_HOSTINGER.md`](deploy/hostinger/DEPLOY_HOSTINGER.md). Hostinger supports Flask only on **VPS** plans (not shared/Web/Cloud hosting). The guide covers the domain, `setup_vps.sh` (installs everything, HTTPS, backups), and moving your existing `smart_library.db` and uploads.
+2. **Raspberry Pi:** follow [`face_recognition_iot/raspberry_pi/README_RASPBERRY_PI.md`](face_recognition_iot/raspberry_pi/README_RASPBERRY_PI.md). `setup_pi.sh` installs the station, saves the server address and IoT key, starts it at boot and opens it full-screen in Chromium.
+3. **Test everything:** run the full workflow checklist in section 7 of the deployment guide (phone on mobile data, barcode borrow/return, face Time-in/Time-out, reboot test).
+
+Production settings (set on the server by `setup_vps.sh`, see `deploy/hostinger/smart-library.env.example`):
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `SMART_LIBRARY_PRODUCTION=1` | server | Production mode (requires a real secret) |
+| `SMART_LIBRARY_BEHIND_PROXY=1` | server | Trust Nginx in front of Gunicorn |
+| `SMART_LIBRARY_HTTPS=1` | server | HTTPS-only session cookies |
+| `SMART_LIBRARY_SECRET` | server | Signs login sessions |
+| `SMART_LIBRARY_IOT_KEY` | server and Pi | Shared key the Pi sends as `X-IOT-API-Key`; must be identical on both |
+| `SMART_LIBRARY_DATA_DIR`, `SMART_LIBRARY_MODEL_DIR` | server | Where the database, uploads and face models are stored |
+| `DATABASE_URL` | server | Optional PostgreSQL instead of SQLite |
+| `SMART_LIBRARY_API_URL` | Pi | Your `https://` server address |
+| `SMART_LIBRARY_AUTO_ATTENDANCE`, `SMART_LIBRARY_AUTO_COOLDOWN` | Pi | Optional automatic Time-in/Time-out (off by default) |
+| `SMART_LIBRARY_CAMERA`, `SMART_LIBRARY_STATION_HOST`, `SMART_LIBRARY_STATION_PORT` | Pi | Camera index; the station page stays on `127.0.0.1:5001` |
+
+Never commit real keys or the server env file. Change the default staff passwords on first sign-in.
 
 ## Step-by-step: run locally on Windows
 
-You need Python installed and a camera connected for face recognition. Run the two applications in **two separate PowerShell terminals**, and keep both terminals open while using the system. Run all commands below from `C:\SmartLibrarySystem001`.
+> For development and testing on one PC only. For real use, deploy online (see above) so nothing has to run on the librarian's computer.
+
+You need Python installed. Step 1 (the main system, including barcode borrowing/returning) runs fine on Windows. Step 2 (the camera station) now uses the Raspberry Pi Camera Module through Picamera2, so it runs **on the Raspberry Pi only**; the Windows commands in step 2 are kept for reference and will fail with `No module named 'picamera2'` on a PC. Use two **separate PowerShell terminals** if you do run both, and keep them open. Run all commands below from `C:\SmartLibrarySystem001`.
 
 ### 1. Set up and start the Smart Library backend
 
@@ -32,7 +89,9 @@ $env:SMART_LIBRARY_IOT_KEY = "paste-the-generated-key-here"
 
 Leave this terminal running. Open [http://127.0.0.1:5000/](http://127.0.0.1:5000/) to use the main system. The SQLite database is `smart_library.db`; startup preserves existing accounts and records.
 
-### 2. Set up and start Face Recognition / IoT
+### 2. Set up and start Face Recognition / IoT (Raspberry Pi only)
+
+> The station code opens the camera with Picamera2 (`face_recognition_iot/camera.py`), which is not available on Windows. To run the station, use the [Raspberry Pi guide](face_recognition_iot/raspberry_pi/README_RASPBERRY_PI.md) and point it at your server. The Windows commands below are the old webcam instructions.
 
 Open PowerShell terminal 2 and run:
 
@@ -49,12 +108,7 @@ Leave this terminal running too. On its first start, the station downloads the Y
 
 ### 3. Sign in and use face attendance
 
-When created, the default development staff accounts use:
-
-- MIS Admin: `mis@paterostechnologicalcollege.edu.ph` / `admin123`
-- Librarian: `labrarian@paterostechnologicalcollege.edu.ph` / `librarian123`
-
-These are not replacement credentials for an existing database; existing accounts and passwords are preserved. Sign in as MIS Admin, add or select a person, and upload that person's face image. Then use the camera station, select **Time-in** or **Time-out**, and confirm the action after the person is recognized. Recognition alone does not record attendance.
+Use the [development staff accounts](#development-staff-accounts) below (an existing database keeps its own accounts and passwords). Sign in as MIS Admin, add or select a person, and upload that person's face image. Then use the camera station, select **Time-in** or **Time-out**, and confirm the action after the person is recognized. Recognition alone does not record attendance.
 
 ### 4. Stop the applications
 
@@ -63,19 +117,19 @@ In each PowerShell terminal, press **Ctrl+C**. Stop the camera station first, th
 ### Troubleshooting
 
 - **Station cannot connect to the library API:** Check that terminal 1 is still running and that `SMART_LIBRARY_API_URL` is `http://127.0.0.1:5000`. Make sure both terminals have the identical `SMART_LIBRARY_IOT_KEY`.
-- **Camera is unavailable:** Close other apps using the camera and allow camera access in Windows privacy settings. The station uses camera device `0` by default; to select another device, set `$env:SMART_LIBRARY_CAMERA = "1"` (or the desired device index) in terminal 2 before starting the station.
+- **Camera is unavailable:** On the Pi, see the troubleshooting table in the Raspberry Pi guide (check the ribbon cable, run `rpicam-hello --list-cameras`). The station uses camera `0` by default; set `SMART_LIBRARY_CAMERA` to select another one.
 - **Camera stopped returning frames:** The station now retries the camera connection automatically. Wait a few seconds for it to reconnect; if it does not, close other apps using the camera, verify Windows camera permissions and the `SMART_LIBRARY_CAMERA` device index, then restart the station.
 - **Models fail to download:** Check the internet connection, then restart the camera station. The model files are downloaded on startup when missing or incomplete.
 - **PowerShell says the address is already in use:** Another copy is likely running. Stop it with **Ctrl+C** in its terminal before starting another copy.
 
-The Flask development servers bind to `127.0.0.1` and are for local development, not production deployment. Change development passwords before any wider deployment; configure a strong `SMART_LIBRARY_SECRET` and HTTPS (`SMART_LIBRARY_HTTPS=1`) in a properly secured deployment.
+The Flask development servers bind to `127.0.0.1` and are for local development only. Production runs Gunicorn behind Nginx with HTTPS; see [Deploy online](#deploy-online-hostinger-vps--raspberry-pi).
 
 ## Development staff accounts
 
 These accounts are created when missing with the initial passwords below. Existing account passwords are preserved, and people records remain in their current database IDs.
 
 - MIS Admin: `mis@paterostechnologicalcollege.edu.ph` / `admin123`
-- Librarian: `labrarian@paterostechnologicalcollege.edu.ph` / `librarian123`
+- Librarian: `librarian@paterostechnologicalcollege.edu.ph` / `librarian123`
 
 Change these development passwords before exposing the system to a network. In a deployed environment, set a strong `SMART_LIBRARY_SECRET` and use HTTPS (`SMART_LIBRARY_HTTPS=1`).
 
@@ -93,7 +147,7 @@ Because this installation has no registered out-of-band channel, code handoff de
 
 ## Face Recognition / IoT
 
-The main backend stores attendance sessions and face-registration metadata; use `/api/attendance/time-in` and `/api/attendance/time-out` through the camera client. See `face_recognition_iot/README.md` for its independent dependencies, models, and camera configuration. Camera frames and downloaded embeddings stay in memory; the main service stores compact face encodings and the uploaded registration image.
+The main backend stores attendance sessions and face-registration metadata; use `/api/attendance/time-in` and `/api/attendance/time-out` through the camera client. In production the Raspberry Pi sends these requests to the online server over HTTPS with the shared IoT key, so the librarian sees attendance on the dashboard from any device. The Pi downloads registered faces from the server (it refreshes every 30 seconds) and only sends attendance after recognition and confirmation (or automatically if auto mode is turned on). See `face_recognition_iot/README.md` for dependencies, models and camera configuration and `face_recognition_iot/raspberry_pi/README_RASPBERRY_PI.md` for the Pi. Camera frames and downloaded embeddings stay in memory; the main service stores compact face encodings and the uploaded registration image.
 
 ## Book barcodes and borrowing
 
