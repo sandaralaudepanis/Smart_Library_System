@@ -1,95 +1,107 @@
-#!/usr/bin/env bash
-# Sets up the Smart Library face-recognition station on a Raspberry Pi.
-#
-# Needs: Raspberry Pi OS 64-bit WITH desktop (Bookworm or newer), Camera Module connected, internet.
-# Run as your normal user (not root), from the cloned project:
-#   bash face_recognition_iot/raspberry_pi/setup_pi.sh https://library.example.com
-# It asks for the IoT key (or pass it as the 2nd argument).
-set -euo pipefail
+"""Measure how fast this Raspberry Pi can detect and recognize faces with the station's own code.
 
-API_URL="${1:-}"
-IOT_KEY="${2:-}"
-[ -n "$API_URL" ] || { echo "Usage: bash $0 https://your-library-address [iot-key]"; exit 1; }
-[ "$(id -u)" -ne 0 ] || { echo "Run as your normal user, not root. The script uses sudo when needed."; exit 1; }
-case "$API_URL" in https://*) ;; *) echo "The address must start with https://"; exit 1;; esac
-API_URL="${API_URL%/}"
+Run it BEFORE relying on the station (stop the service first so the camera is free):
+    sudo systemctl stop smart-library-station
+    cd ~/smart-library/face_recognition_iot
+    .venv/bin/python raspberry_pi/speedtest.py          # 30 seconds
+    .venv/bin/python raspberry_pi/speedtest.py 60       # custom seconds
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATION_DIR="$(cd "$HERE/.." && pwd)"
-VENV="$STATION_DIR/.venv"
-PI_USER="$(id -un)"
+Stand in front of the camera for the whole test so a face is found in most frames.
+Nothing is sent to the server and nothing is saved.
+"""
 
-if [ -z "$IOT_KEY" ]; then
-    read -r -s -p "Paste the IoT key from the server: " IOT_KEY
-    echo
-fi
-[ -n "$IOT_KEY" ] || { echo "An IoT key is required."; exit 1; }
+import statistics
+import subprocess
+import sys
+import time
+from pathlib import Path
 
-echo "==> 1/7  System packages"
-sudo apt-get update
-sudo apt-get install -y python3-venv python3-pip python3-picamera2 curl util-linux
-if ! command -v chromium-browser >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1; then
-    sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
-fi
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-echo "==> 2/7  Checking the camera"
-python3 - <<'PY' || echo "    WARNING: no camera detected. Check the ribbon cable, then reboot and re-run."
-from picamera2 import Picamera2
-cams = Picamera2.global_camera_info()
-print("    cameras found:", len(cams))
-raise SystemExit(0 if cams else 1)
-PY
+from camera import Camera  # noqa: E402
+from face_recognition import FaceRecognizer  # noqa: E402
+from models import ensure_models  # noqa: E402
 
-echo "==> 3/7  Python environment (a few minutes)"
-# --system-site-packages lets the venv use the apt-installed picamera2.
-python3 -m venv --system-site-packages "$VENV"
-"$VENV/bin/pip" install --upgrade pip
-# numpy<2 keeps compatibility with the apt-installed camera libraries.
-"$VENV/bin/pip" install -r "$STATION_DIR/requirements.txt" "numpy<2"
 
-echo "==> 4/7  Face-recognition models"
-( cd "$STATION_DIR" && "$VENV/bin/python" -c "from models import ensure_models; print('   ', *ensure_models().values(), sep='\n    ')" )
+def available_memory_mb():
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    return None
 
-echo "==> 5/7  Connection settings"
-sudo install -m 600 -o root -g root /dev/null /etc/smart-library-station.env
-sudo tee /etc/smart-library-station.env >/dev/null <<ENV
-SMART_LIBRARY_API_URL=$API_URL
-SMART_LIBRARY_IOT_KEY=$IOT_KEY
-SMART_LIBRARY_AUTO_ATTENDANCE=0
-SMART_LIBRARY_AUTO_COOLDOWN=60
-SMART_LIBRARY_CAMERA=0
-SMART_LIBRARY_STATION_HOST=127.0.0.1
-SMART_LIBRARY_STATION_PORT=5001
-ENV
-if curl -fsS -m 20 -H "X-IOT-API-Key: $IOT_KEY" "$API_URL/api/iot/face-templates" -o /dev/null; then
-    echo "    Server reachable and key accepted."
-else
-    echo "    WARNING: could not reach $API_URL with that key. Check the address, key and internet."
-fi
 
-echo "==> 6/7  Start automatically at boot"
-sed -e "s|__USER__|$PI_USER|" -e "s|__STATION_DIR__|$STATION_DIR|" -e "s|__VENV__|$VENV|" \
-    "$HERE/smart-library-station.service" | sudo tee /etc/systemd/system/smart-library-station.service >/dev/null
-sudo systemctl daemon-reload
-sudo systemctl enable --now smart-library-station
+def cpu_temperature():
+    try:
+        return subprocess.run(
+            ["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=3
+        ).stdout.strip()
+    except Exception:
+        return "unknown"
 
-echo "==> 7/7  Full-screen browser at login"
-chmod +x "$HERE/kiosk.sh"
-mkdir -p "$HOME/.config/labwc"
-AUTOSTART="$HOME/.config/labwc/autostart"
-touch "$AUTOSTART"
-grep -qF "$HERE/kiosk.sh" "$AUTOSTART" || echo "\"$HERE/kiosk.sh\" &" >> "$AUTOSTART"
-# X11 desktop (e.g. Pi 3 / older images): LXDE session autostart. Copy the system file first so the panel keeps working.
-if [ -f /etc/xdg/lxsession/LXDE-pi/autostart ]; then
-    XAUTO="$HOME/.config/lxsession/LXDE-pi/autostart"
-    mkdir -p "$(dirname "$XAUTO")"
-    [ -f "$XAUTO" ] || cp /etc/xdg/lxsession/LXDE-pi/autostart "$XAUTO"
-    grep -qF "$HERE/kiosk.sh" "$XAUTO" || echo "@$HERE/kiosk.sh" >> "$XAUTO"
-fi
-sudo raspi-config nonint do_boot_behaviour B4 || echo "    Could not set desktop auto-login; set it in: sudo raspi-config > System Options > Boot / Auto Login."
-sudo raspi-config nonint do_blanking 1 || true
 
-echo
-echo "Done. Reboot to test the full start-up:   sudo reboot"
-echo "Check the station any time:               systemctl status smart-library-station"
-echo "Live log:                                 journalctl -u smart-library-station -f"
+def median_ms(values):
+    return round(statistics.median(values) * 1000) if values else None
+
+
+def main():
+    seconds = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+    models = ensure_models()
+    recognizer = FaceRecognizer(
+        models["face_detection_yunet_2023mar.onnx"],
+        models["face_recognition_sface_2021dec.onnx"],
+    )
+    camera = Camera(0)
+    detect_times, encode_times = [], []
+    frames = faces_found = 0
+    try:
+        time.sleep(1.0)  # let exposure settle
+        print(f"Testing for {seconds} seconds. Stand in front of the camera...")
+        start = time.monotonic()
+        while time.monotonic() - start < seconds:
+            frame = camera.read()
+            if frame is None:
+                continue
+            frames += 1
+            t0 = time.perf_counter()
+            faces = recognizer.detector.detect(frame)
+            detect_times.append(time.perf_counter() - t0)
+            if faces:
+                faces_found += 1
+                t1 = time.perf_counter()
+                try:
+                    recognizer.encode_face(frame, faces[0])
+                except ValueError:
+                    continue
+                encode_times.append(time.perf_counter() - t1)
+        elapsed = time.monotonic() - start
+    finally:
+        camera.close()
+
+    print()
+    print(f"Frames processed:       {frames} in {elapsed:.0f} s ({frames / elapsed:.1f} frames/s, detection only)")
+    print(f"Frames with a face:     {faces_found}")
+    print(f"Detect time (median):   {median_ms(detect_times)} ms")
+    print(f"Encode time (median):   {median_ms(encode_times)} ms")
+    print(f"Free memory:            {available_memory_mb()} MB")
+    print(f"CPU temperature:        {cpu_temperature()}")
+    print()
+    if not encode_times:
+        print("No face was found. Face the camera in good light and run the test again.")
+        return
+    total = statistics.median(detect_times) + statistics.median(encode_times)
+    # The station encodes every 5th frame, so a full recognition costs about this long per attempt.
+    print(f"One full recognition:   about {round(total * 1000)} ms")
+    # These cut-offs are rough rules of thumb, not measured limits.
+    if total < 0.6:
+        print("Result: should feel responsive for attendance scanning.")
+    elif total < 1.2:
+        print("Result: usable, but expect about a second of delay after a person faces the camera.")
+    else:
+        print("Result: slow. Send me these numbers; the station may need a lighter setup or a Pi 4/5.")
+
+
+if __name__ == "__main__":
+    main()
