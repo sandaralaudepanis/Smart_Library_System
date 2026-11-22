@@ -184,6 +184,33 @@ body {
 .confirm-button:disabled { border-color: #8b968d; background: #9da69e; cursor: not-allowed; }
 .cancel-button { background: #fff; color: var(--ink); }
 
+.book-transactions { margin-top: 20px; padding-top: 16px; border-top: 1px solid #6f8375; }
+.book-transactions > h3 { margin: 0 0 10px; font-size: 16px; }
+.book-flow-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.book-flow-button { min-height: 48px; font-size: 13px; }
+.book-flow-panel { display: grid; gap: 12px; margin-top: 12px; padding: 14px; border: 1px solid #59705f; border-radius: 8px; background: #f3f7ed; }
+.book-flow-panel[hidden],.book-borrower-details[hidden],.book-loans[hidden],.book-scan-panel[hidden],
+#confirmBookReturnButton[hidden] { display: none; }
+.book-flow-panel h4,.book-loans h5 { margin: 0; font-size: 15px; }
+.book-flow-panel form { display: grid; gap: 5px; }
+.book-flow-panel label { font-size: 12px; font-weight: 600; }
+.book-flow-input-row { display: flex; gap: 8px; }
+.book-flow-input-row input { min-width: 0; flex: 1; min-height: 39px; padding: 7px 9px; border: 1px solid #809487; border-radius: 5px; font: 14px "Poppins", sans-serif; }
+.book-flow-input-row button,.book-flow-panel .confirm-button,.book-flow-panel .cancel-button { min-height: 39px; }
+.book-flow-panel .recognition-heading { align-items: center; }
+.book-borrower-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; margin: 0; }
+.book-borrower-details div { min-width: 0; }
+.book-borrower-details dt { color: var(--muted); font-size: 10px; font-weight: 600; }
+.book-borrower-details dd { margin: 2px 0 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 600; }
+.book-flow-message { min-height: 18px; margin: 0; color: var(--muted); font-size: 12px; }
+.book-flow-message.error { color: var(--danger); font-weight: 600; }
+.book-flow-message.success { color: var(--success); font-weight: 600; }
+.book-loans { padding: 10px; border-radius: 6px; background: #e6ecd8; }
+.book-loans ul { display: grid; gap: 8px; margin: 8px 0 12px; padding-left: 20px; }
+.book-loans li { font-size: 12px; }
+.book-scan-panel { display: grid; gap: 8px; }
+.book-scan-panel #confirmBookReturnButton { justify-self: end; }
+
 @media (max-width: 700px) {
   body { padding: 8px; }
   .station { min-height: calc(100vh - 16px); padding: 9px; border-radius: 10px; }
@@ -197,6 +224,8 @@ body {
   .mode-group { gap: 8px; }
   .mode-button { min-height: 58px; font-size: 14px; }
   .person-details { grid-template-columns: 1fr 1fr; }
+  .book-borrower-details { grid-template-columns: 1fr 1fr; }
+  .book-flow-input-row { flex-direction: column; }
   .confirmation-actions { display: grid; grid-template-columns: 1fr 1fr; }
 }
 
