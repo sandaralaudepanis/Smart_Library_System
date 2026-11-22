@@ -5,6 +5,7 @@
   const API = "/api";
   const INSTITUTIONAL_EMAIL_DOMAIN = "@paterostechnologicalcollege.edu.ph";
   const INSTITUTIONAL_EMAIL_PATTERN = /^[A-Za-z0-9._%+-]+@paterostechnologicalcollege\.edu\.ph$/i;
+  const BOOKS_PER_PAGE = 10;
   let currentUser = null;
   let books = [];
   let transactions = [];
@@ -12,6 +13,7 @@
   let activeBook = null;
   let addingBook = false;
   let coverPreviewUrl = null;
+  let bookPage = 1;
 
   function escapeHtml(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, function (character) {
@@ -58,8 +60,9 @@
 
   function addInteractiveStyles() {
     const style = document.createElement("style");
-    style.textContent = ".book-actions{display:flex;gap:4px;flex-wrap:wrap}.book-actions button{border:1px solid #224332;background:#e7f1e8;color:#1e3f2e;border-radius:4px;padding:5px 7px;font:600 11px Arial,sans-serif;cursor:pointer}.book-actions button:hover{background:#d5e8d8}.filter-grid .filter-field input{box-sizing:border-box;width:100%;min-width:0;border:0;outline:0;background:transparent;font:600 13px Arial,sans-serif;color:#1e3f2e}.api-dialog{width:min(480px,calc(100vw - 32px));max-height:calc(100vh - 32px);padding:0;border:2px solid #224332;border-radius:6px;color:#1e3f2e;box-shadow:0 12px 36px #0004}.api-dialog::backdrop{background:#10201888}.api-dialog form{padding:22px}.api-dialog h2{margin:0 0 16px;font:700 20px Arial,sans-serif}.api-dialog p{font:14px/1.5 Arial,sans-serif}.api-dialog .dialog-field{display:grid;gap:5px;margin:12px 0}.api-dialog label{font:600 13px Arial,sans-serif}.api-dialog input,.api-dialog select{width:100%;min-height:38px;padding:8px;border:1px solid #809487;border-radius:4px;font:14px Arial,sans-serif}.api-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.api-dialog button{min-height:36px;padding:7px 14px;border:1px solid #224332;border-radius:4px;background:#fff;color:#1e3f2e;font:600 13px Arial,sans-serif;cursor:pointer}.api-dialog button[type=submit]{background:#224332;color:#fff}.api-dialog button:hover{filter:brightness(.96)}";
+    style.textContent = ".book-actions{display:flex;gap:4px;flex-wrap:wrap}.book-actions button{border:1px solid #224332;background:#e7f1e8;color:#1e3f2e;border-radius:4px;padding:5px 7px;font:600 11px Arial,sans-serif;cursor:pointer}.book-actions button:hover{background:#d5e8d8}.filter-grid .filter-field input{box-sizing:border-box;width:100%;min-width:0;border:0;outline:0;background:transparent;font:600 13px Arial,sans-serif;color:#1e3f2e}.api-dialog{width:min(480px,calc(100vw - 32px));max-height:calc(100vh - 32px);padding:0;border:2px solid #224332;border-radius:6px;color:#1e3f2e;box-shadow:0 12px 36px #0004}.api-dialog::backdrop{background:#10201888}.api-dialog form{padding:22px}.api-dialog h2{margin:0 0 16px;font:700 20px Arial,sans-serif}.api-dialog p{font:14px/1.5 Arial,sans-serif}.api-dialog .dialog-field{display:grid;gap:5px;margin:12px 0}.api-dialog .dialog-field[hidden]{display:none}.api-dialog label{font:600 13px Arial,sans-serif}.api-dialog input,.api-dialog select{width:100%;min-height:38px;padding:8px;border:1px solid #809487;border-radius:4px;font:14px Arial,sans-serif}.api-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.api-dialog button{min-height:36px;padding:7px 14px;border:1px solid #224332;border-radius:4px;background:#fff;color:#1e3f2e;font:600 13px Arial,sans-serif;cursor:pointer}.api-dialog button[type=submit]{background:#224332;color:#fff}.api-dialog button:hover{filter:brightness(.96)}";
     style.textContent += ".dashboard-card-link{cursor:pointer}.dashboard-card-link:focus-visible{outline:3px solid #39744e;outline-offset:2px}.attendance-dialog{width:min(1100px,calc(100vw - 28px))}.attendance-dialog h2{display:flex;justify-content:space-between;align-items:center}.attendance-dialog h2 button{min-width:34px;padding:2px 8px;font-size:22px}.dialog-table-wrap{max-height:65vh;overflow:auto}.attendance-dialog table{width:100%;min-width:680px;border-collapse:collapse}.attendance-dialog th,.attendance-dialog td{padding:8px 10px;border-bottom:1px solid #d8e2da;text-align:left;font:12px/1.4 Arial,sans-serif}.attendance-dialog th{position:sticky;top:0;background:#224332;color:#fff}.attendance-dialog td{color:#1e3f2e}#log-rows td{white-space:nowrap}";
+    style.textContent += ".book-pagination{display:flex;justify-content:center;align-items:center;gap:12px;padding:12px;color:#1e3f2e;font:600 12px Arial,sans-serif}.book-pagination button{min-height:34px;padding:7px 10px;border:1px solid #224332;border-radius:4px;background:#e7f1e8;color:#1e3f2e;font:700 11px Arial,sans-serif;cursor:pointer}.book-pagination button:disabled{opacity:.5;cursor:not-allowed}.borrower-records-stage{margin-top:16px}.borrower-records-table{min-width:900px}.borrower-records-table td small{display:block;color:#5b7466}.transaction-status{display:inline-block;padding:4px 7px;border-radius:4px;background:#e7f1e8;font-weight:700}.transaction-status.overdue{background:#fff0ed;color:#812a20}.transaction-status.complete{background:#e2f4e7;color:#174b2e}.borrower-records-table .record-delete{border:1px solid #8e3b32;border-radius:4px;background:#fff0ed;color:#812a20;padding:5px 7px;font:600 11px Arial,sans-serif;cursor:pointer}#peopleRoleFilter[hidden]{display:none}.people-total{margin:8px 0;color:#1e3f2e;font-size:13px;font-weight:600}";
     document.head.appendChild(style);
     const coverStyle = document.createElement("style");
     coverStyle.textContent = ".cover-controls{display:grid;gap:7px;margin-top:12px}.cover-controls label{display:block;padding:7px 9px;background:#e7f1e8;color:#1e3f2e;border:1px solid #809487;border-radius:4px;font:600 12px Arial,sans-serif;text-align:center;cursor:pointer}.cover-controls input{width:100%;font:11px Arial,sans-serif}.cover-controls>div{display:flex;gap:6px}.cover-controls button{flex:1;padding:6px 8px;border:1px solid #224332;border-radius:4px;background:#e7f1e8;color:#1e3f2e;font:600 11px Arial,sans-serif;cursor:pointer}.cover-controls small{font:11px/1.3 Arial,sans-serif;overflow-wrap:anywhere}#bookCoverImage{max-height:300px;object-fit:contain}";
@@ -456,10 +459,13 @@
       return (!selectedCategory || String(book.category || "").toLowerCase() === selectedCategory) &&
         (!selectedAvailability || (selectedAvailability === "available" ? available : !available));
     });
+    const pageCount = Math.max(1, Math.ceil(visibleBooks.length / BOOKS_PER_PAGE));
+    bookPage = Math.min(bookPage, pageCount);
+    const pageBooks = visibleBooks.slice((bookPage - 1) * BOOKS_PER_PAGE, bookPage * BOOKS_PER_PAGE);
     const countLabel = document.getElementById("book-count-label");
     if (countLabel) countLabel.textContent = String(visibleBooks.length);
     const tbody = table.querySelector("tbody");
-    tbody.innerHTML = visibleBooks.length ? visibleBooks.map(function (book) {
+    tbody.innerHTML = pageBooks.length ? pageBooks.map(function (book) {
       const borrowed = transactions.filter(function (item) { return item.book_id === book.id && item.status === "borrowed"; });
       const borrowerNames = borrowed.map(function (item) { return item.borrower_name; }).join(", ");
       const available = Number(book.available_quantity) > 0;
@@ -483,6 +489,15 @@
         '<button class="action-button remove-action" type="button" data-action="delete" data-book-id="' + book.id + '">Remove</button></td></tr>';
     }).join("") : '<tr><td class="empty-catalog" colspan="9">' +
       (books.length ? "No books match these filters." : "No books found. Try a different search or add a book.") + '</td></tr>';
+    const pagination = document.getElementById("bookPagination");
+    if (pagination) {
+        const pageLabel = document.getElementById("bookPageLabel");
+        const previous = pagination.querySelector('[data-page-direction="-1"]');
+        const next = pagination.querySelector('[data-page-direction="1"]');
+        if (pageLabel) pageLabel.textContent = "Page " + bookPage + " of " + pageCount;
+        if (previous) previous.disabled = bookPage <= 1;
+        if (next) next.disabled = bookPage >= pageCount;
+    }
   }
 
   function updateBookCategoryFilter() {
@@ -536,6 +551,49 @@
     transactions = results[1].transactions;
     updateBookCategoryFilter();
     renderBooks();
+    renderBorrowerRecords();
+  }
+
+  function formatTransactionDate(value, includeTime) {
+    if (!value) return "—";
+    if (!includeTime) return value;
+    const parsed = new Date(String(value).replace(" ", "T"));
+    if (Number.isNaN(parsed.getTime())) return value;
+    return new Intl.DateTimeFormat("en-PH", {
+      timeZone: "Asia/Manila",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    }).format(parsed);
+  }
+
+  function renderBorrowerRecords() {
+    const body = document.getElementById("borrowerRecordsBody");
+    if (!body) return;
+    const canDelete = currentUser && currentUser.role === "MIS Admin";
+    body.innerHTML = transactions.length ? transactions.map(function (record) {
+      const displayStatus = record.status === "returned"
+        ? "Complete"
+        : record.display_status === "overdue" ? "Overdue" : "Borrowed";
+      const statusClass = displayStatus.toLowerCase();
+      const borrower = '<strong>' + escapeHtml(record.borrower_name) + '</strong>' +
+        '<small>School ID: ' + escapeHtml(record.borrower_school_id) + '</small>' +
+        '<small>' + escapeHtml(record.borrower_email) + '</small>';
+      const book = '<strong>' + escapeHtml(record.title) + '</strong>' +
+        '<small>Book No.: ' + escapeHtml(record.book_number) + ' · Barcode: ' +
+        escapeHtml(record.barcode) + '</small>';
+      return '<tr data-transaction-id="' + record.id + '">' +
+        '<td>' + borrower + '</td>' +
+        '<td>' + book + '</td>' +
+        '<td>' + escapeHtml(formatTransactionDate(record.borrow_date, true)) + '</td>' +
+        '<td>' + escapeHtml(formatTransactionDate(record.due_date, false)) + '</td>' +
+        '<td>' + escapeHtml(formatTransactionDate(record.return_date, true)) + '</td>' +
+        '<td><span class="transaction-status ' + statusClass + '">' + displayStatus + '</span></td>' +
+        '<td>' + (canDelete ? '<button type="button" class="record-delete" data-action="delete-record">Delete</button>' : "") + '</td>' +
+        '</tr>';
+    }).join("") : '<tr><td colspan="7">No borrower records found.</td></tr>';
   }
 
   async function borrowBook(book) {
@@ -543,7 +601,7 @@
     dueDate.setDate(dueDate.getDate() + 14);
     showDialog("Borrow Book", [
       { name: "borrower_school_id", label: "School ID", required: true, value: "" },
-      { name: "institutional_email", label: "Institutional Email", type: "email", required: true, value: "", placeholder: "yourname@paterostechnologicalcollege.edu.ph" },
+      { name: "institutional_email", label: "Institutional Email", type: "email", readonly: true, value: "", placeholder: "Retrieved from People Information" },
       { name: "borrower_name", label: "Borrower's Name", readonly: true, value: "" },
       { name: "borrower_department", label: "Course / Program", readonly: true, value: "" },
       { name: "book_number", label: "Book Number", readonly: true, value: book.book_number },
@@ -553,20 +611,21 @@
       { name: "borrow_date", label: "Borrow Date", readonly: true, value: new Date().toISOString().slice(0, 10) },
       { name: "due_date", label: "Due Date", type: "date", value: dueDate.toISOString().slice(0, 10), required: true }
     ], book.title, "Confirm Borrow", async function (values) {
-      const typedEmail = values.institutional_email.trim();
-      if (!INSTITUTIONAL_EMAIL_PATTERN.test(typedEmail)) {
-        throw new Error("The institutional email must end with " + INSTITUTIONAL_EMAIL_DOMAIN + ".");
+      if (!values.institutional_email.trim()) {
+        throw new Error("Look up an active borrower School ID to retrieve the institutional email.");
       }
       const matches = await request("/borrowers?exact=1&q=" + encodeURIComponent(values.borrower_school_id.trim()));
       const borrower = matches.borrowers.find(function (item) {
         return item.school_id.toLowerCase() === values.borrower_school_id.trim().toLowerCase();
       });
       if (!borrower) throw new Error("No active student or faculty member has that school ID.");
+      if (!borrower.has_active_time_in) {
+        throw new Error("Time In is required before borrowing. Ask the borrower to record attendance using face recognition.");
+      }
       await request("/transactions/borrow", {
         method: "POST",
         body: JSON.stringify({
           borrower_school_id: borrower.school_id,
-          institutional_email: typedEmail,
           barcode: values.barcode.trim(),
           due_date: values.due_date
         })
@@ -581,6 +640,7 @@
       const nameInput = form.elements.borrower_name;
       const programInput = form.elements.borrower_department;
       const barcodeInput = form.elements.barcode;
+      const confirmButton = form.querySelector('button[type="submit"]');
 
       function addStatusLine(input) {
         const line = document.createElement("small");
@@ -593,31 +653,14 @@
         };
       }
       const setIdStatus = addStatusLine(schoolId);
-      const setEmailStatus = addStatusLine(emailInput);
 
       function clearBorrower() {
+        emailInput.value = "";
         nameInput.value = "";
         programInput.value = "";
+        confirmButton.disabled = true;
         if (context) context.textContent = "";
       }
-
-      // ---- Institutional Email: typed by the librarian / MIS staff, never auto-filled ----
-      function checkEmail() {
-        const value = emailInput.value.trim();
-        if (!value) {
-          emailInput.setCustomValidity("");
-          setEmailStatus("");
-        } else if (!INSTITUTIONAL_EMAIL_PATTERN.test(value)) {
-          const message = "Email must end with " + INSTITUTIONAL_EMAIL_DOMAIN;
-          emailInput.setCustomValidity(message);
-          setEmailStatus(message, "error");
-        } else {
-          emailInput.setCustomValidity("");
-          setEmailStatus("Valid institutional email.", "ok");
-        }
-      }
-      emailInput.addEventListener("input", checkEmail);
-      emailInput.addEventListener("blur", checkEmail);
 
       // ---- School ID: looks up the saved record and fills Name + Course / Program ----
       let lookupTimer = null;
@@ -631,6 +674,7 @@
           setIdStatus("");
           return;
         }
+        confirmButton.disabled = true;
         setIdStatus("Looking up borrower...", "info");
         let matches;
         try {
@@ -651,8 +695,14 @@
         }
         nameInput.value = borrower.name;
         programInput.value = borrower.department || "";
+        emailInput.value = borrower.email || "";
         if (context) context.textContent = "Borrower: " + borrower.name + " · " + (borrower.department || "");
-        setIdStatus("Borrower found: " + borrower.name + " (" + borrower.role + ")", "ok");
+        if (!borrower.has_active_time_in) {
+          setIdStatus("Time In is required before borrowing. Ask the borrower to record attendance using face recognition.", "error");
+          return;
+        }
+        confirmButton.disabled = false;
+        setIdStatus("Borrower found: " + borrower.name + " (" + borrower.role + "). Institutional email retrieved; Time In verified.", "ok");
       }
 
       function scheduleLookup(delay) {
@@ -751,12 +801,8 @@
     if (!table) return;
     const search = document.querySelector(".search-box input");
     if (search) search.addEventListener("input", function () {
+      bookPage = 1;
       refreshBooks(search.value).catch(function (error) { notify(error.message, true); });
-    });
-    const scanSearchButton = document.getElementById("scanBookButton");
-    if (scanSearchButton && search) scanSearchButton.addEventListener("click", function () {
-      search.focus();
-      notify("Scan a book barcode with the USB scanner, then press Enter.");
     });
     if (search) search.addEventListener("keydown", function (event) {
       if (event.key !== "Enter" || !search.value.trim()) return;
@@ -788,12 +834,46 @@
         }
       } catch (error) { notify(error.message, true); }
     });
+    const pagination = document.getElementById("bookPagination");
+    if (pagination) pagination.addEventListener("click", function (event) {
+      const button = event.target.closest("button[data-page-direction]");
+      if (!button || button.disabled) return;
+      bookPage += Number(button.dataset.pageDirection);
+      renderBooks();
+    });
+    const borrowerRecordsBody = document.getElementById("borrowerRecordsBody");
+    if (borrowerRecordsBody) borrowerRecordsBody.addEventListener("click", function (event) {
+      const button = event.target.closest("button[data-action='delete-record']");
+      if (!button || !currentUser || currentUser.role !== "MIS Admin") return;
+      const record = transactions.find(function (item) {
+        return item.id === Number(button.closest("tr").dataset.transactionId);
+      });
+      if (!record) return;
+      showDialog(
+        "Delete Borrower Record",
+        [],
+        "Permanently delete the completed borrowing record for " + record.borrower_name +
+          " and " + record.title + "? This cannot be undone.",
+        "Delete Record",
+        async function () {
+          await request("/transactions/" + record.id, { method: "DELETE" });
+          notify("Borrower record deleted.");
+          await refreshBooks(search ? search.value : "");
+        }
+      );
+    });
     const addButton = document.querySelector(".btn-add");
     if (addButton) addButton.addEventListener("click", function () { setBookModal(null); });
     const categoryFilter = document.getElementById("bookCategoryFilter");
     const availabilityFilter = document.getElementById("bookAvailabilityFilter");
-    if (categoryFilter) categoryFilter.addEventListener("change", renderBooks);
-    if (availabilityFilter) availabilityFilter.addEventListener("change", renderBooks);
+    if (categoryFilter) categoryFilter.addEventListener("change", function () {
+      bookPage = 1;
+      renderBooks();
+    });
+    if (availabilityFilter) availabilityFilter.addEventListener("change", function () {
+      bookPage = 1;
+      renderBooks();
+    });
     const importButton = document.getElementById("importBooksButton");
     const importFile = document.getElementById("importBooksFile");
     if (importButton && importFile) {
@@ -924,14 +1004,21 @@
       } catch (error) { notify(error.message, true); }
     });
     refreshBooks("").catch(function (error) { notify(error.message, true); });
+    window.setInterval(function () {
+      refreshBooks(search ? search.value : "").catch(function (error) {
+        notify("Could not refresh Book Transactions: " + error.message, true);
+      });
+    }, 15000);
   }
 
   function showPersonForm(person) {
     const dialog = document.createElement("dialog");
     dialog.className = "api-dialog people-dialog";
     const roles = ["Student", "Faculty", "Staff", "Other"];
+    const selectedRole = person && !roles.includes(person.role) ? "Other" : (person ? person.role : "Student");
+    const otherRole = person && selectedRole === "Other" ? person.role : "";
     const roleOptions = roles.map(function (role) {
-      return '<option value="' + role + '"' + ((person && person.role === role) ? " selected" : "") + ">" + role + "</option>";
+      return '<option value="' + role + '"' + (selectedRole === role ? " selected" : "") + ">" + role + "</option>";
     }).join("");
     const statusOptions = ["active", "inactive"].map(function (status) {
       const label = status === "active" ? "Active" : "Inactive";
@@ -942,8 +1029,9 @@
       (person ? "" : '<small class="person-lookup-status" aria-live="polite"></small>') + '</div>' +
       '<div class="dialog-field"><label>Full Name<input name="name" required maxlength="200" value="' + escapeHtml(person && person.name) + '"></label></div>' +
       '<div class="dialog-field"><label>Role<select name="role" required>' + roleOptions + '</select></label></div>' +
+      '<div class="dialog-field" data-other-role-field hidden><label>Other role or category<input name="other_role" maxlength="50" value="' + escapeHtml(otherRole) + '"></label></div>' +
       '<div class="dialog-field"><label>Department<input name="department" maxlength="100" value="' + escapeHtml(person && person.department) + '"></label></div>' +
-      '<div class="dialog-field"><label>Contact information<input name="contact" maxlength="80" value="' + escapeHtml(person && person.contact) + '"></label></div>' +
+      '<div class="dialog-field"><label>Institutional Email<input name="institutional_email" type="email" required maxlength="254" placeholder="name@paterostechnologicalcollege.edu.ph" value="' + escapeHtml(person && person.institutional_email) + '"></label></div>' +
       '<div class="dialog-field"><label>Status<select name="status">' + statusOptions + '</select></label></div>' +
       '<div class="dialog-field"><label>Upload Face Image<input type="file" name="face_image" accept="image/png,image/jpeg,image/gif,image/webp"></label></div>' +
       (person && person.has_face_image ? '<p>Registered face image is stored securely in the main backend.</p>' : "") +
@@ -962,6 +1050,19 @@
     const lookupStatus = dialog.querySelector(".person-lookup-status");
     const submitButton = personForm.querySelector('button[type="submit"]');
     const heading = personForm.querySelector("h2");
+    const roleInput = personForm.elements.role;
+    const otherRoleInput = personForm.elements.other_role;
+    const otherRoleField = otherRoleInput.closest("[data-other-role-field]");
+
+    function syncOtherRoleField() {
+      const isOther = roleInput.value === "Other";
+      otherRoleField.hidden = !isOther;
+      otherRoleInput.required = isOther;
+      if (!isOther) otherRoleInput.value = "";
+    }
+
+    roleInput.addEventListener("change", syncOtherRoleField);
+    syncOtherRoleField();
 
     function setLookupStatus(message, kind) {
       if (!lookupStatus) return;
@@ -972,9 +1073,11 @@
     function applyMatch(found) {
       matched = found;
       personForm.elements.name.value = found ? found.name : "";
-      personForm.elements.role.value = found ? found.role : "Student";
+      roleInput.value = found && !roles.includes(found.role) ? "Other" : (found ? found.role : "Student");
+      otherRoleInput.value = found && roleInput.value === "Other" ? found.role : "";
+      syncOtherRoleField();
       personForm.elements.department.value = found ? (found.department || "") : "";
-      personForm.elements.contact.value = found ? (found.contact || "") : "";
+      personForm.elements.institutional_email.value = found ? (found.institutional_email || "") : "";
       personForm.elements.status.value = found ? String(found.status).toLowerCase() : "active";
       heading.textContent = found ? "Update People Information" : "Add People Information";
       submitButton.textContent = found ? "Update Information" : "Save Information";
@@ -1038,12 +1141,18 @@
       const target = person || matched;
       const values = new FormData(form);
       const image = values.get("face_image");
+      const institutionalEmail = values.get("institutional_email").trim();
+      if (!INSTITUTIONAL_EMAIL_PATTERN.test(institutionalEmail)) {
+        notify("The institutional email must end with " + INSTITUTIONAL_EMAIL_DOMAIN + ".", true);
+        return;
+      }
       const payload = {
         school_id: values.get("school_id").trim(),
         name: values.get("name").trim(),
         role: values.get("role"),
+        other_role: values.get("other_role").trim(),
         department: values.get("department").trim(),
-        contact: values.get("contact").trim(),
+        institutional_email: institutionalEmail,
         status: values.get("status")
       };
       try {
@@ -1129,6 +1238,9 @@
   let managedView = "system";
   let managedSearchText = "";
   let managedRoleFilter = "";
+  let managedFaceFilter = "";
+  let managedPage = 1;
+  const managedPageSize = 10;
 
   async function loadManagedRecords(view, searchText, role) {
     const params = new URLSearchParams();
@@ -1136,13 +1248,39 @@
     if (role) params.set("role", role);
     const result = await request("/" + (view === "system" ? "system-users" : "people") + "?" + params.toString());
     managedUsers = view === "system" ? result.users : result.people;
+    const peopleTotal = document.getElementById("peopleTotal");
+    if (view === "people" && peopleTotal) peopleTotal.textContent = String(result.total || 0);
     const body = document.querySelector(".stage tbody");
     const table = document.querySelector(".stage table");
     if (!body || !table) return;
+    let visibleUsers = managedUsers;
+    const pagination = document.getElementById("peoplePagination");
+    if (view === "people") {
+      if (managedFaceFilter === "registered") {
+        visibleUsers = managedUsers.filter(function (person) { return Boolean(person.face_registered); });
+      } else if (managedFaceFilter === "not_registered") {
+        visibleUsers = managedUsers.filter(function (person) { return !person.face_registered; });
+      }
+      const pageCount = Math.max(1, Math.ceil(visibleUsers.length / managedPageSize));
+      managedPage = Math.min(Math.max(1, managedPage), pageCount);
+      const pageStart = (managedPage - 1) * managedPageSize;
+      visibleUsers = visibleUsers.slice(pageStart, pageStart + managedPageSize);
+      if (pagination) {
+        pagination.hidden = false;
+        const pageStatus = document.getElementById("peoplePageStatus");
+        const previous = pagination.querySelector('[data-page-direction="-1"]');
+        const next = pagination.querySelector('[data-page-direction="1"]');
+        if (pageStatus) pageStatus.textContent = "Page " + managedPage + " of " + pageCount;
+        if (previous) previous.disabled = managedPage <= 1;
+        if (next) next.disabled = managedPage >= pageCount;
+      }
+    } else if (pagination) {
+      pagination.hidden = true;
+    }
     const head = table.querySelector("thead tr");
     if (view === "system") {
       head.innerHTML = "<th>NAME</th><th>EMAIL</th><th>ROLE</th><th>ACCOUNT STATUS</th><th>CREATED</th><th>LAST LOGIN</th><th class=\"center\">ACTION</th>";
-      body.innerHTML = managedUsers.length ? managedUsers.map(function (user) {
+      body.innerHTML = visibleUsers.length ? visibleUsers.map(function (user) {
         const status = String(user.status || "").toLowerCase();
         const statusLabel = status === "active" ? "Active" : status === "inactive" ? "Inactive" : user.status;
         return '<tr data-user-id="' + user.id + '"><td class="bold">' + escapeHtml(user.name) +
@@ -1154,14 +1292,14 @@
           '</td></tr>';
       }).join("") : '<tr><td colspan="7">No system accounts found.</td></tr>';
     } else {
-      head.innerHTML = "<th>SCHOOL ID</th><th>NAME</th><th>ROLE</th><th>DEPARTMENT</th><th>CONTACT</th><th>STATUS</th><th>FACE RECOGNITION</th><th class=\"center\">ACTION</th>";
-      body.innerHTML = managedUsers.length ? managedUsers.map(function (person) {
+      head.innerHTML = "<th>SCHOOL ID</th><th>NAME</th><th>ROLE</th><th>DEPARTMENT</th><th>INSTITUTIONAL EMAIL</th><th>STATUS</th><th>FACE RECOGNITION STATUS</th><th class=\"center\">ACTION</th>";
+      body.innerHTML = visibleUsers.length ? visibleUsers.map(function (person) {
         const status = String(person.status || "").toLowerCase();
         const statusLabel = status === "active" ? "Active" : status === "inactive" ? "Inactive" : person.status;
         return '<tr data-user-id="' + person.id + '"><td class="bold">' + escapeHtml(person.school_id) +
           '</td><td class="bold">' + escapeHtml(person.name) + '</td><td>' + escapeHtml(person.role) +
-          '</td><td>' + escapeHtml(person.department) + '</td><td>' + escapeHtml(person.contact) + '</td><td>' + escapeHtml(statusLabel) +
-          '</td><td>' + (person.face_registered ? "Registered" : (person.has_face_image ? "Pending" : "Not registered")) +
+          '</td><td>' + escapeHtml(person.department) + '</td><td>' + escapeHtml(person.institutional_email) + '</td><td>' + escapeHtml(statusLabel) +
+          '</td><td>' + (person.face_registered ? "Registered" : "Not Registered") +
           '</td><td class="center actions"><button class="btn-icon edit" title="Edit people information" aria-label="Edit people information" data-action="edit">Edit</button>' +
           (status === "active" ? '<button class="btn-icon delete" title="Deactivate person" aria-label="Deactivate person" data-action="deactivate">Deactivate</button>' : "") +
           (status === "inactive" ? '<button class="btn-icon delete" title="Permanently delete people information" aria-label="Permanently delete people information" data-action="delete">Delete Permanently</button>' : "") +
@@ -1178,12 +1316,20 @@
     const systemTab = document.getElementById("viewSystemUsers");
     const peopleTab = document.getElementById("viewPeopleInformation");
     const roleFilter = document.getElementById("systemRoleFilter");
+    const peopleRoleFilter = document.getElementById("peopleRoleFilter");
+    const faceRecognitionFilter = document.getElementById("faceRecognitionFilter");
+    const peoplePagination = document.getElementById("peoplePagination");
     const importButton = document.getElementById("importPeopleButton");
     const importFile = document.getElementById("importPeopleFile");
     const importHint = document.getElementById("importPeopleHint");
+    const peopleTotalLabel = document.getElementById("peopleTotalLabel");
     function setView(view) {
       managedView = view;
-      managedRoleFilter = view === "system" && roleFilter ? roleFilter.value : "";
+      managedPage = 1;
+      managedRoleFilter = view === "system"
+        ? (roleFilter ? roleFilter.value : "")
+        : (peopleRoleFilter ? peopleRoleFilter.value : "");
+      managedFaceFilter = faceRecognitionFilter ? faceRecognitionFilter.value : "";
       managedSearchText = search ? search.value : "";
       if (systemTab) {
         systemTab.classList.toggle("active", view === "system");
@@ -1194,10 +1340,14 @@
         peopleTab.setAttribute("aria-selected", String(view === "people"));
       }
       if (roleFilter) roleFilter.hidden = view !== "system";
+      if (peopleRoleFilter) peopleRoleFilter.hidden = view !== "people";
+      if (faceRecognitionFilter) faceRecognitionFilter.hidden = view !== "people";
+      if (peoplePagination) peoplePagination.hidden = view !== "people";
       if (importButton) importButton.hidden = view !== "people";
       if (importHint) importHint.hidden = view !== "people";
+      if (peopleTotalLabel) peopleTotalLabel.hidden = view !== "people";
       if (add) add.textContent = view === "system" ? "ADD SYSTEM USER" : "ADD PEOPLE INFORMATION";
-      loadManagedRecords(view, managedSearchText, roleFilter ? roleFilter.value : "").catch(function (error) {
+      loadManagedRecords(view, managedSearchText, managedRoleFilter).catch(function (error) {
         notify(error.message, true);
       });
     }
@@ -1209,9 +1359,32 @@
         notify(error.message, true);
       });
     });
+    if (peopleRoleFilter) peopleRoleFilter.addEventListener("change", function () {
+      managedRoleFilter = peopleRoleFilter.value;
+      managedPage = 1;
+      loadManagedRecords("people", managedSearchText, managedRoleFilter).catch(function (error) {
+        notify(error.message, true);
+      });
+    });
+    if (faceRecognitionFilter) faceRecognitionFilter.addEventListener("change", function () {
+      managedFaceFilter = faceRecognitionFilter.value;
+      managedPage = 1;
+      loadManagedRecords("people", managedSearchText, managedRoleFilter).catch(function (error) {
+        notify(error.message, true);
+      });
+    });
     if (search) search.addEventListener("input", function () {
       managedSearchText = search.value;
+      managedPage = 1;
       loadManagedRecords(managedView, managedSearchText, managedRoleFilter).catch(function (error) {
+        notify(error.message, true);
+      });
+    });
+    if (peoplePagination) peoplePagination.addEventListener("click", function (event) {
+      const button = event.target.closest("button[data-page-direction]");
+      if (!button || button.disabled) return;
+      managedPage += Number(button.dataset.pageDirection);
+      loadManagedRecords("people", managedSearchText, managedRoleFilter).catch(function (error) {
         notify(error.message, true);
       });
     });
@@ -1285,6 +1458,12 @@
       }
     });
     setView("system");
+    window.setInterval(function () {
+      if (managedView !== "people") return;
+      loadManagedRecords("people", managedSearchText, managedRoleFilter).catch(function (error) {
+        notify("Could not refresh People Information: " + error.message, true);
+      });
+    }, 30000);
   }
 
   function bindReportsPage() {
@@ -1303,7 +1482,7 @@
     const filterGrid = document.querySelector(".filter-grid");
     const extraFilters = [
       { id: "attendanceSearch", label: "Search by school ID or name", type: "search", placeholder: "School ID or name" },
-      { id: "attendanceRole", label: "Role", type: "select", options: ["Student", "Faculty", "Staff", "Other"] },
+      { id: "attendanceRole", label: "Role", type: "select", options: ["Student", "Faculty", "Staff"] },
       { id: "attendanceDepartment", label: "Department", type: "text", placeholder: "Department or course" },
       { id: "attendanceEvent", label: "Attendance records", type: "select", options: ["all", "time_in", "time_out"], labels: ["All sessions", "Time-in", "Time-out"] }
     ];
