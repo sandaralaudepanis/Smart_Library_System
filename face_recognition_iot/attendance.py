@@ -3,6 +3,7 @@
 import json
 import threading
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import cv2
@@ -31,6 +32,12 @@ class SmartLibraryApi:
                 result = response.read()
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
+            try:
+                payload = json.loads(detail)
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+                raise RuntimeError(payload["error"]) from error
             raise RuntimeError(f"Library API returned {error.code}: {detail}") from error
         except URLError as error:
             raise RuntimeError(f"Cannot connect to the Smart Library API: {error.reason}") from error
@@ -117,5 +124,31 @@ class SmartLibraryApi:
             f"/api/attendance/{event}",
             method="POST",
             body={"school_id": person["school_id"]},
+            timeout=60,
+        )
+
+    def lookup_borrower(self, school_id):
+        return self._request(
+            "/api/iot/borrowers?school_id=" + quote(school_id, safe="")
+        )
+
+    def lookup_book_by_barcode(self, barcode):
+        return self._request(
+            "/api/iot/books/barcode?value=" + quote(barcode, safe="")
+        )
+
+    def borrow_book(self, school_id, barcode):
+        return self._request(
+            "/api/iot/transactions/borrow",
+            method="POST",
+            body={"school_id": school_id, "barcode": barcode},
+            timeout=60,
+        )
+
+    def return_book(self, school_id, barcode):
+        return self._request(
+            "/api/iot/transactions/return",
+            method="POST",
+            body={"school_id": school_id, "barcode": barcode},
             timeout=60,
         )
