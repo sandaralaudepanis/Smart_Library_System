@@ -21,8 +21,26 @@ const recordedTime = document.getElementById("recordedTime");
 const confirmationActions = document.getElementById("confirmationActions");
 const confirmButton = document.getElementById("confirmButton");
 const cancelButton = document.getElementById("cancelButton");
+const borrowBookButton = document.getElementById("borrowBookButton");
+const returnBookButton = document.getElementById("returnBookButton");
+const bookFlowPanel = document.getElementById("bookFlowPanel");
+const bookFlowTitle = document.getElementById("bookFlowTitle");
+const bookFlowMessage = document.getElementById("bookFlowMessage");
+const borrowerLookupForm = document.getElementById("borrowerLookupForm");
+const borrowerSchoolId = document.getElementById("borrowerSchoolId");
+const bookBorrowerDetails = document.getElementById("bookBorrowerDetails");
+const bookLoans = document.getElementById("bookLoans");
+const bookLoansList = document.getElementById("bookLoansList");
+const bookScanPanel = document.getElementById("bookScanPanel");
+const bookBarcodeLabel = document.getElementById("bookBarcodeLabel");
+const bookBarcodeInput = document.getElementById("bookBarcodeInput");
+const confirmBookReturnButton = document.getElementById("confirmBookReturnButton");
 
 let feedRetryTimer = null;
+let bookFlowMode = "";
+let bookFlowBorrower = null;
+let activeBorrowedBooks = [];
+let scannedReturnBook = null;
 
 function formatManilaTimestamp(value) {
   const timestamp = new Date(value);
@@ -210,6 +228,215 @@ cancelButton.addEventListener("click", async function () {
   } catch (error) {
     stationMessage.textContent = error.message;
     stationMessage.className = "station-message error";
+  }
+});
+
+function setBookFlowMessage(message, kind) {
+  bookFlowMessage.textContent = message || "";
+  bookFlowMessage.className = "book-flow-message" + (kind ? " " + kind : "");
+}
+
+function startBookFlow(mode) {
+  bookFlowMode = mode;
+  bookFlowBorrower = null;
+  activeBorrowedBooks = [];
+  scannedReturnBook = null;
+  bookFlowPanel.hidden = false;
+  bookFlowTitle.textContent = mode === "borrow" ? "Borrow Book" : "Return Book";
+  borrowerLookupForm.reset();
+  bookBorrowerDetails.hidden = true;
+  bookLoans.hidden = true;
+  bookScanPanel.hidden = true;
+  confirmBookReturnButton.hidden = true;
+  setBookFlowMessage(
+    mode === "borrow"
+      ? "Enter the borrower's School ID to look up their information."
+      : "Enter the borrower's School ID to view their active loans."
+  );
+  borrowerSchoolId.focus();
+}
+
+function fillBookBorrower(borrower) {
+  bookBorrowerDetails.hidden = false;
+  document.getElementById("bookBorrowerSchoolId").textContent = borrower.school_id || "-";
+  document.getElementById("bookBorrowerName").textContent = borrower.name || "-";
+  document.getElementById("bookBorrowerRole").textContent = borrower.role || "-";
+  document.getElementById("bookBorrowerDepartment").textContent = borrower.department || "-";
+  document.getElementById("bookBorrowerEmail").textContent = borrower.institutional_email || "-";
+}
+
+function renderBorrowedBooks(loans, hasActiveTimeIn) {
+  bookLoansList.replaceChildren();
+  loans.forEach(function (loan) {
+    const item = document.createElement("li");
+    item.textContent = loan.title + " · Barcode " + loan.barcode +
+      " · Due " + loan.due_date;
+    bookLoansList.appendChild(item);
+  });
+  bookLoans.hidden = false;
+  document.getElementById("startReturnScanButton").disabled = loans.length === 0 || !hasActiveTimeIn;
+  document.getElementById("startReturnScanButton").textContent =
+    !hasActiveTimeIn && loans.length
+      ? "Time In required before return"
+      : loans.length ? "Start Return Scan" : "No borrowed books to return";
+}
+
+async function lookupBookBorrower() {
+  const schoolId = borrowerSchoolId.value.trim();
+  if (!schoolId) {
+    setBookFlowMessage("Enter a borrower School ID.", "error");
+    return;
+  }
+  setBookFlowMessage("Looking up School ID...");
+  bookScanPanel.hidden = true;
+  confirmBookReturnButton.hidden = true;
+  try {
+    const result = await request(
+      "/api/book-borrowers?school_id=" + encodeURIComponent(schoolId)
+    );
+    bookFlowBorrower = result.borrower;
+    activeBorrowedBooks = result.borrowed_books || [];
+    fillBookBorrower(bookFlowBorrower);
+    if (bookFlowMode === "borrow") {
+      if (bookFlowBorrower.status !== "active") {
+        setBookFlowMessage("Inactive people cannot borrow books.", "error");
+        return;
+      }
+      if (!bookFlowBorrower.has_active_time_in) {
+        setBookFlowMessage(
+          "Time In is required before borrowing. Record attendance using face recognition, then try again.",
+          "error"
+        );
+        return;
+      }
+      bookBarcodeLabel.textContent = "Scan the Book Barcode.";
+      setBookFlowMessage("Scan the Book Barcode.");
+      bookScanPanel.hidden = false;
+      bookBarcodeInput.focus();
+      return;
+    }
+
+    renderBorrowedBooks(activeBorrowedBooks, bookFlowBorrower.has_active_time_in);
+    if (!bookFlowBorrower.has_active_time_in) {
+      setBookFlowMessage(
+        "Time In is required before returning a book. Record attendance using face recognition, then try again.",
+        "error"
+      );
+      return;
+    }
+    setBookFlowMessage(
+      activeBorrowedBooks.length
+        ? "Review the borrowed books, then start a return scan."
+        : "This borrower has no active book loans.",
+      activeBorrowedBooks.length ? "" : "error"
+    );
+  } catch (error) {
+    bookFlowBorrower = null;
+    activeBorrowedBooks = [];
+    bookBorrowerDetails.hidden = true;
+    bookLoans.hidden = true;
+    setBookFlowMessage(error.message, "error");
+  }
+}
+
+async function scanBookForTransaction() {
+  const barcode = bookBarcodeInput.value.trim();
+  if (!bookFlowBorrower || !barcode) {
+    setBookFlowMessage("Enter or scan a barcode for the verified borrower.", "error");
+    return;
+  }
+  confirmBookReturnButton.hidden = true;
+  scannedReturnBook = null;
+  setBookFlowMessage("Checking the scanned barcode...");
+  try {
+    const result = await request(
+      "/api/books/barcode?value=" + encodeURIComponent(barcode)
+    );
+    const book = result.book;
+    if (bookFlowMode === "borrow") {
+      if (Number(book.available_quantity) < 1) {
+        throw new Error("There are no available copies of this book.");
+      }
+      const saved = await request("/api/book-transactions/borrow", {
+        method: "POST",
+        body: JSON.stringify({ school_id: bookFlowBorrower.school_id, barcode: book.barcode })
+      });
+      setBookFlowMessage(
+        bookFlowBorrower.name + " borrowed " + book.title +
+          " (barcode " + book.barcode + ").",
+        "success"
+      );
+      bookBarcodeInput.value = "";
+      return saved;
+    }
+
+    const loan = activeBorrowedBooks.find(function (item) {
+      return item.barcode === book.barcode;
+    });
+    if (!loan) {
+      throw new Error("This barcode does not match a book currently borrowed by this School ID.");
+    }
+    scannedReturnBook = book;
+    confirmBookReturnButton.hidden = false;
+    setBookFlowMessage(
+      "Barcode matched " + book.title + ". Confirm the return to complete the transaction."
+    );
+  } catch (error) {
+    setBookFlowMessage(error.message, "error");
+  }
+}
+
+borrowBookButton.addEventListener("click", function () { startBookFlow("borrow"); });
+returnBookButton.addEventListener("click", function () { startBookFlow("return"); });
+document.getElementById("closeBookFlowButton").addEventListener("click", function () {
+  bookFlowPanel.hidden = true;
+  bookFlowMode = "";
+});
+borrowerLookupForm.addEventListener("submit", function (event) {
+  event.preventDefault();
+  lookupBookBorrower();
+});
+document.getElementById("startReturnScanButton").addEventListener("click", function () {
+  if (!activeBorrowedBooks.length) return;
+  bookBarcodeInput.value = "";
+  confirmBookReturnButton.hidden = true;
+  bookScanPanel.hidden = false;
+  bookBarcodeLabel.textContent = "Scan the Book Barcode to Return.";
+  setBookFlowMessage("Scan the Book Barcode to Return.");
+  bookBarcodeInput.focus();
+});
+document.getElementById("scanBookButton").addEventListener("click", scanBookForTransaction);
+bookBarcodeInput.addEventListener("keydown", function (event) {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  scanBookForTransaction();
+});
+confirmBookReturnButton.addEventListener("click", async function () {
+  if (!bookFlowBorrower || !scannedReturnBook) return;
+  confirmBookReturnButton.disabled = true;
+  try {
+    const result = await request("/api/book-transactions/return", {
+      method: "POST",
+      body: JSON.stringify({
+        school_id: bookFlowBorrower.school_id,
+        barcode: scannedReturnBook.barcode
+      })
+    });
+    const returnedTitle = result.book.title;
+    const borrowerName = result.borrower.name;
+    bookBarcodeInput.value = "";
+    scannedReturnBook = null;
+    confirmBookReturnButton.hidden = true;
+    await lookupBookBorrower();
+    setBookFlowMessage(
+      returnedTitle + " was returned by " + borrowerName +
+        (result.return_date ? " at " + formatManilaTimestamp(result.return_date) : "") + ".",
+      "success"
+    );
+  } catch (error) {
+    setBookFlowMessage(error.message, "error");
+  } finally {
+    confirmBookReturnButton.disabled = false;
   }
 });
 
