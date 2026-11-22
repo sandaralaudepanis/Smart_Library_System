@@ -45,6 +45,48 @@
         Select Time-in or Time-out before confirming attendance.
       </p>
 
+      <section class="book-transactions" aria-labelledby="bookTransactionsTitle">
+        <h3 id="bookTransactionsTitle">Book Transactions</h3>
+        <div class="book-flow-buttons">
+          <button type="button" class="mode-button book-flow-button" id="borrowBookButton">BORROW BOOK</button>
+          <button type="button" class="mode-button book-flow-button" id="returnBookButton">RETURN BOOK</button>
+        </div>
+        <section class="book-flow-panel" id="bookFlowPanel" hidden aria-live="polite">
+          <div class="recognition-heading">
+            <h4 id="bookFlowTitle">Borrow Book</h4>
+            <button type="button" class="cancel-button" id="closeBookFlowButton">Close</button>
+          </div>
+          <form id="borrowerLookupForm">
+            <label for="borrowerSchoolId">Borrower's School ID</label>
+            <div class="book-flow-input-row">
+              <input id="borrowerSchoolId" name="school_id" autocomplete="off" required maxlength="50">
+              <button type="submit" class="confirm-button" id="lookupBorrowerButton">Look Up</button>
+            </div>
+          </form>
+          <dl class="book-borrower-details" id="bookBorrowerDetails" hidden>
+            <div><dt>School ID</dt><dd id="bookBorrowerSchoolId">-</dd></div>
+            <div><dt>Name</dt><dd id="bookBorrowerName">-</dd></div>
+            <div><dt>Role</dt><dd id="bookBorrowerRole">-</dd></div>
+            <div><dt>Department</dt><dd id="bookBorrowerDepartment">-</dd></div>
+            <div><dt>Institutional Email</dt><dd id="bookBorrowerEmail">-</dd></div>
+          </dl>
+          <p class="book-flow-message" id="bookFlowMessage" role="status" aria-live="polite"></p>
+          <div class="book-loans" id="bookLoans" hidden>
+            <h5>Currently borrowed books</h5>
+            <ul id="bookLoansList"></ul>
+            <button type="button" class="confirm-button" id="startReturnScanButton">Start Return Scan</button>
+          </div>
+          <div class="book-scan-panel" id="bookScanPanel" hidden>
+            <label id="bookBarcodeLabel" for="bookBarcodeInput">Scan the Book Barcode.</label>
+            <div class="book-flow-input-row">
+              <input id="bookBarcodeInput" autocomplete="off" maxlength="50">
+              <button type="button" class="confirm-button" id="scanBookButton">Scan Barcode</button>
+            </div>
+            <button type="button" class="confirm-button" id="confirmBookReturnButton" hidden>Confirm Return</button>
+          </div>
+        </section>
+      </section>
+
       <section class="recognition-card" id="recognitionCard" hidden aria-live="polite">
         <div class="recognition-heading">
           <div>
