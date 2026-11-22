@@ -81,6 +81,17 @@
         <option value="MIS Admin">MIS Admin Accounts</option>
         <option value="Librarian">Librarian Accounts</option>
       </select>
+      <select id="peopleRoleFilter" class="system-role-filter" aria-label="Filter people by role" hidden>
+        <option value="">All people categories</option>
+        <option value="Student">Students</option>
+        <option value="Faculty">Faculty</option>
+        <option value="Staff">Staff</option>
+      </select>
+      <select id="faceRecognitionFilter" class="system-role-filter" aria-label="Filter by face recognition status" hidden>
+        <option value="">All face recognition statuses</option>
+        <option value="registered">Registered</option>
+        <option value="not_registered">Not Registered</option>
+      </select>
       <input type="file" id="importPeopleFile" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" hidden>
       <button class="btn-import-people" type="button" id="importPeopleButton" hidden>
         UPLOAD EXCEL
@@ -92,7 +103,8 @@
       </button>
     </div>
 
-    <p class="import-hint" id="importPeopleHint" hidden>Columns are matched automatically (ID No. / School ID, Name, Role, Department / Program, Contact, Status). Extra columns are ignored. Face images are not imported.</p>
+    <p class="people-total" id="peopleTotalLabel" hidden>Total registered people: <strong id="peopleTotal">0</strong></p>
+    <p class="import-hint" id="importPeopleHint" hidden>Columns are matched automatically (ID No. / School ID, Name, Institutional Email, Role, Department / Program, Status). Extra columns are ignored. Face images are not imported.</p>
 
     <section class="stage">
       <div class="scroll" tabindex="0">
@@ -112,6 +124,11 @@
             <tr><td colspan="7">Loading system accounts...</td></tr>
           </tbody>
         </table>
+      </div>
+      <div class="people-pagination" id="peoplePagination" role="navigation" aria-label="People information pages" hidden>
+        <button type="button" data-page-direction="-1" disabled>Previous</button>
+        <span id="peoplePageStatus">Page 1 of 1</span>
+        <button type="button" data-page-direction="1" disabled>Next</button>
       </div>
     </section>
   </main>
