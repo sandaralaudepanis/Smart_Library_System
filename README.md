@@ -108,7 +108,7 @@ Leave this terminal running too. On its first start, the station downloads the Y
 
 ### 3. Sign in and use face attendance
 
-Use the [development staff accounts](#development-staff-accounts) below (an existing database keeps its own accounts and passwords). Sign in as MIS Admin, add or select a person, and upload that person's face image. Then use the camera station, select **Time-in** or **Time-out**, and confirm the action after the person is recognized. Recognition alone does not record attendance.
+Use the [development staff accounts](#development-staff-accounts) below (an existing database keeps its own accounts and passwords). Sign in as MIS Admin, add or select a person, and upload that person's face image. Uploaded images are encoded by the backend, and People Information shows **Registered** only after the encoding is saved. Images that could not be encoded remain pending for a backend startup retry or camera-station sync. Then use the camera station, select **Time-in** or **Time-out**, and confirm the action after the person is recognized. Recognition alone does not record attendance.
 
 ### 4. Stop the applications
 
@@ -137,6 +137,8 @@ Change these development passwords before exposing the system to a network. In a
 
 MIS Admin and Librarian accounts can use the dashboard, book catalog, borrowing/returns, attendance history, and reports. Only MIS Admins can manage people and system accounts. People records do not receive login passwords.
 
+In **Users Management > People Information**, MIS Admins can store each person's institutional email, filter records by Student, Faculty, or Staff, filter face-recognition status, paginate the people list, and view the registered-people total. Other roles remain visible under all categories; selecting **Other** when adding or editing a person reveals a field for their preferred role or category. Face-recognition status reflects the saved face encoding and refreshes while the People Information view is open.
+
 ## Librarian password recovery
 
 Password recovery is handled inside the system and does not use SMTP or external email. From **Forgot Password?**, an active Librarian submits their registered email address. The MIS Admin dashboard polls for recovery requests and provides **View Request**, **Approve**, and **Reject** actions.
@@ -147,11 +149,13 @@ Because this installation has no registered out-of-band channel, code handoff de
 
 ## Face Recognition / IoT
 
-The main backend stores attendance sessions and face-registration metadata; use `/api/attendance/time-in` and `/api/attendance/time-out` through the camera client. In production the Raspberry Pi sends these requests to the online server over HTTPS with the shared IoT key, so the librarian sees attendance on the dashboard from any device. The Pi downloads registered faces from the server (it refreshes every 30 seconds) and only sends attendance after recognition and confirmation (or automatically if auto mode is turned on). See `face_recognition_iot/README.md` for dependencies, models and camera configuration and `face_recognition_iot/raspberry_pi/README_RASPBERRY_PI.md` for the Pi. Camera frames and downloaded embeddings stay in memory; the main service stores compact face encodings and the uploaded registration image.
+The main backend stores attendance sessions and face-registration metadata; use `/api/attendance/time-in` and `/api/attendance/time-out` through the camera client. In production the Raspberry Pi sends these requests to the online server over HTTPS with the shared IoT key, so the librarian sees attendance on the dashboard from any device. The Pi downloads registered faces from the server (it refreshes every 30 seconds) and only sends attendance after recognition and confirmation (or automatically if auto mode is turned on). The station also supports borrowing and returning books: look up a borrower by School ID, scan a barcode, and confirm a return after checking the matching active loan. Borrowing and returning require an active, unclosed Time In from face-recognition attendance; both the main system and the station verify this against the shared attendance database. These actions use the same keyed server API and update the Book Transactions history. See `face_recognition_iot/README.md` for dependencies, models and camera configuration and `face_recognition_iot/raspberry_pi/README_RASPBERRY_PI.md` for the Pi. Camera frames and downloaded embeddings stay in memory; the main service stores compact face encodings and the uploaded registration image.
 
 ## Book barcodes and borrowing
 
-The Book Transactions screens support USB barcode scanners that act like a keyboard: select **Scan Barcode**, scan the label, and press Enter if the scanner does not send Enter automatically. You can also type or paste barcode values. Add Book has separate **Book Number** and **Barcode** values; use **Generate Barcode** when no physical barcode exists. The generated Code 128 barcode can be previewed and printed from the form.
+The Book Transactions screens support USB barcode scanners that act like a keyboard: scan the label in the search field and press Enter if the scanner does not send Enter automatically. You can also type or paste barcode values. The catalog is paginated and can be filtered by category and availability. Add Book has separate **Book Number** and **Barcode** values; use **Generate Barcode** when no physical barcode exists. The generated Code 128 barcode can be previewed and printed from the form.
+
+Borrowing looks up an active borrower's name, program, and institutional email from People Information using their School ID. The borrower must have an active face-recognition Time In before borrowing or returning; otherwise the transaction is blocked with a warning. The email is stored with the transaction; each borrower can have only one active loan per book. The **Borrower Records** table shows borrower and book details, borrowed and due dates, actual return time, and Borrowed / Overdue / Complete status. Only MIS Admins can delete completed borrower records. The librarian Book Transactions page refreshes every 15 seconds so station-side borrow and return updates appear without a manual reload.
 
 On first startup after this update, the backend migrates the existing SQLite database in place. Existing book numbers are copied into `books.book_number`, unique barcode values are assigned to those rows, and existing transactions receive barcode and borrower-email snapshots. No manual SQL is required. The new database fields are:
 
@@ -176,5 +180,5 @@ To test the feature locally, start the backend using the Windows instructions ab
 1. Sign in as MIS Admin or Librarian and open **Book Transactions**.
 2. Choose **ADD BOOK**, enter the regular book details, then scan into the Barcode field or enter it manually. Use **Generate Barcode** to create a unique Code 128 label; preview it on screen and choose **Print Barcode** to print.
 3. Enter a barcode already used by another book and save (or scan it into the field). The form reports that the barcode is already assigned.
-4. In the page search box, choose **Scan Barcode**, scan a registered book, and press Enter. The book information opens; an unknown code reports **Book not found**.
+4. In the page search box, scan or enter a registered book barcode and press Enter. The book information opens; an unknown code reports **Book not found**.
 5. Choose **Borrow** on a book. Scan or enter the borrower's School ID and press Enter to retrieve the registered name, program, and institutional email. Scan or enter the book barcode, check its availability, then confirm the due date. The transaction stores the email and barcode snapshots and updates available copies.
