@@ -387,6 +387,58 @@ def get_station_state():
     return jsonify(station_state())
 
 
+def library_request_response(operation, success_status=200):
+    library_api = LIBRARY_API
+    if library_api is None:
+        return jsonify({"error": "The station is still starting. Please wait a moment."}), 409
+    try:
+        result = operation(library_api)
+    except RuntimeError as error:
+        return jsonify({"error": str(error)}), 502
+    return jsonify(result), success_status
+
+
+@app.get("/api/book-borrowers")
+def lookup_book_borrower():
+    school_id = request.args.get("school_id", "").strip()
+    if not school_id:
+        return jsonify({"error": "Enter a borrower School ID."}), 400
+    return library_request_response(lambda library_api: library_api.lookup_borrower(school_id))
+
+
+@app.get("/api/books/barcode")
+def lookup_station_book():
+    barcode = request.args.get("value", "").strip()
+    if not barcode:
+        return jsonify({"error": "Scan or enter a book barcode."}), 400
+    return library_request_response(lambda library_api: library_api.lookup_book_by_barcode(barcode))
+
+
+@app.post("/api/book-transactions/borrow")
+def borrow_station_book():
+    data = request.get_json(silent=True) or {}
+    school_id = str(data.get("school_id", "")).strip()
+    barcode = str(data.get("barcode", "")).strip()
+    if not school_id or not barcode:
+        return jsonify({"error": "A borrower School ID and scanned book barcode are required."}), 400
+    return library_request_response(
+        lambda library_api: library_api.borrow_book(school_id, barcode),
+        success_status=201,
+    )
+
+
+@app.post("/api/book-transactions/return")
+def return_station_book():
+    data = request.get_json(silent=True) or {}
+    school_id = str(data.get("school_id", "")).strip()
+    barcode = str(data.get("barcode", "")).strip()
+    if not school_id or not barcode:
+        return jsonify({"error": "A borrower School ID and scanned book barcode are required."}), 400
+    return library_request_response(
+        lambda library_api: library_api.return_book(school_id, barcode)
+    )
+
+
 @app.post("/api/action")
 def choose_action():
     data = request.get_json(silent=True) or {}
