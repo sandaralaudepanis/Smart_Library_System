@@ -72,8 +72,7 @@
       <div class="book-catalog-controls">
         <div class="search-box">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="searchInput" placeholder="Search or scan barcode">
-          <button type="button" class="scan-search-button" id="scanBookButton">Scan Barcode</button>
+          <input type="text" id="searchInput" placeholder="Search">
         </div>
         <div class="book-filter-controls">
           <label class="book-filter">Category
@@ -121,6 +120,34 @@
               </tr>
             </thead>
             <tbody><tr><td colspan="9">Loading book catalog...</td></tr></tbody>
+          </table>
+        </div>
+        <div class="book-pagination" id="bookPagination" aria-label="Book catalog pages">
+          <button type="button" data-page-direction="-1" disabled>Previous</button>
+          <span id="bookPageLabel">Page 1 of 1</span>
+          <button type="button" data-page-direction="1" disabled>Next</button>
+        </div>
+      </div>
+    </section>
+    <section class="stage borrower-records-stage">
+      <div class="table-card">
+        <div class="table-header-bar">
+          <span class="table-title">Borrower Records</span>
+        </div>
+        <div class="scroll" tabindex="0">
+          <table class="borrower-records-table">
+            <thead>
+              <tr>
+                <th>Borrower</th>
+                <th>Book</th>
+                <th>Borrowed</th>
+                <th>Expected Return</th>
+                <th>Actual Return</th>
+                <th>Status</th>
+                <th class="admin-record-action">Action</th>
+              </tr>
+            </thead>
+            <tbody id="borrowerRecordsBody"><tr><td colspan="7">Loading borrower records...</td></tr></tbody>
           </table>
         </div>
       </div>
