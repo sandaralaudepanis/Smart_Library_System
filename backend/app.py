@@ -50,6 +50,9 @@ BEHIND_PROXY = os.environ.get("SMART_LIBRARY_BEHIND_PROXY") == "1"
 # exactly as before.
 STORE_FILES_IN_DATABASE = USING_POSTGRES
 MAX_COVER_SIZE = 5 * 1024 * 1024
+INSTITUTIONAL_EMAIL_PATTERN = re.compile(
+    r"[A-Za-z0-9._%+-]+@paterostechnologicalcollege\.edu\.ph", re.IGNORECASE
+)
 MANILA_TIME = ZoneInfo("Asia/Manila")
 app = Flask(__name__)
 _secret_key = os.environ.get("SMART_LIBRARY_SECRET", "")
@@ -298,11 +301,12 @@ def attendance_rows(search="", date_from="", date_to="", role="", department="",
     if event_type not in ("all", "time_in", "time_out"):
         raise ValueError("Choose all attendance, Time-in, or Time-out records.")
 
-    sql = """
+    role_expression = "COALESCE(NULLIF(a.person_role, ''), NULLIF(u.person_type, ''), u.role, '')"
+    sql = f"""
         SELECT a.id, u.id AS person_id,
                COALESCE(NULLIF(a.person_school_id, ''), u.school_id, '') AS school_id,
                COALESCE(NULLIF(a.person_name, ''), u.name, '') AS name,
-               COALESCE(NULLIF(a.person_role, ''), NULLIF(u.person_type, ''), u.role, '') AS role,
+               {role_expression} AS role,
                COALESCE(NULLIF(a.person_department, ''), u.department, '') AS department,
                a.attendance_date, a.time_in, a.time_out, a.source,
                CASE a.status WHEN 'admin_closed' THEN 'Closed by Admin'
@@ -311,12 +315,17 @@ def attendance_rows(search="", date_from="", date_to="", role="", department="",
         LEFT JOIN users u ON u.id = a.person_id
         WHERE (COALESCE(a.person_school_id, u.school_id, '') LIKE ?
                OR COALESCE(a.person_name, u.name, '') LIKE ?)
-          AND (? = '' OR COALESCE(NULLIF(a.person_role, ''), NULLIF(u.person_type, ''), u.role, '') = ?)
+          AND (? = ''
+               OR (? = 'Other' AND {role_expression} NOT IN ('Student', 'Faculty', 'Staff'))
+               OR (? <> 'Other' AND {role_expression} = ?))
           AND (? = '' OR COALESCE(a.person_department, u.department, '') LIKE ?)
           AND (u.id IS NULL OR u.role NOT IN ('MIS Admin', 'Librarian'))
     """
     search_term = f"%{search}%"
-    parameters = [search_term, search_term, role, role, f"%{department}%" if department else "", f"%{department}%" if department else ""]
+    parameters = [
+        search_term, search_term, role, role, role, role,
+        f"%{department}%" if department else "", f"%{department}%" if department else "",
+    ]
     if event_type == "time_in":
         sql += " AND a.time_in IS NOT NULL"
     elif event_type == "time_out":
@@ -1058,6 +1067,9 @@ def delete_book(book_id):
     return jsonify({"message": "Book and its transaction history were permanently deleted."})
 
 
+
+
+
 @app.get("/api/borrowers")
 @login_required
 def find_borrowers():
@@ -1066,7 +1078,13 @@ def find_borrowers():
         if request.args.get("exact") == "1":
             # Exact School ID match (used by the Borrow Book auto-fill)
             rows = connection.execute(
-                """SELECT id, school_id, name, email, role, department FROM users
+                """SELECT id, school_id, name, email, role, department,
+                          EXISTS(SELECT 1 FROM attendance_records a
+                                 WHERE a.person_id = users.id
+                                   AND a.source = 'face_recognition'
+                                   AND a.time_in IS NOT NULL AND a.time_out IS NULL)
+                          AS has_active_time_in
+                   FROM users
                    WHERE status = 'active' AND role IN ('Student', 'Faculty')
                    AND LOWER(school_id) = LOWER(?)
                    ORDER BY lower(name) LIMIT 20""",
@@ -1075,7 +1093,13 @@ def find_borrowers():
         else:
             search = f"%{term}%"
             rows = connection.execute(
-                """SELECT id, school_id, name, email, role, department FROM users
+                """SELECT id, school_id, name, email, role, department,
+                          EXISTS(SELECT 1 FROM attendance_records a
+                                 WHERE a.person_id = users.id
+                                   AND a.source = 'face_recognition'
+                                   AND a.time_in IS NOT NULL AND a.time_out IS NULL)
+                          AS has_active_time_in
+                   FROM users
                    WHERE status = 'active' AND role IN ('Student', 'Faculty')
                    AND (school_id LIKE ? OR name LIKE ? OR email LIKE ?)
                    ORDER BY lower(name) LIMIT 20""",
@@ -1104,18 +1128,10 @@ def borrow_book():
         book_id = int(data.get("book_id", 0))
         school_id = clean_text(data, "borrower_school_id", 50)
         barcode = str(data.get("barcode", "")).strip()
-        institutional_email = str(data.get("institutional_email", "")).strip()
         due_date = str(data.get("due_date") or (datetime.now(MANILA_TIME).date() + timedelta(days=14)).isoformat())
         date.fromisoformat(due_date)
     except (ValueError, TypeError):
         return api_error("Choose a valid book, borrower school ID, and due date.")
-    if not institutional_email:
-        return api_error("Enter the borrower's institutional email address.")
-    if len(institutional_email) > 254 or not re.fullmatch(
-        r"[A-Za-z0-9._%+-]+@paterostechnologicalcollege\.edu\.ph", institutional_email, re.IGNORECASE
-    ):
-        return api_error("The institutional email must end with @paterostechnologicalcollege.edu.ph.")
-    institutional_email = institutional_email.lower()
 
     try:
         with get_connection() as connection:
@@ -1133,30 +1149,69 @@ def borrow_book():
                     (book_id,),
                 ).fetchone()
             borrower = connection.execute(
-                """SELECT id, school_id, name, email, department FROM users
-                   WHERE school_id = ? AND status = 'active' AND role IN ('Student', 'Faculty')""",
-                (school_id,),
+                f"""SELECT id, school_id, name, email, department FROM users
+                    WHERE {SQL_SCHOOL_ID_KEY} = ?
+                      AND status = 'active' AND role IN ('Student', 'Faculty')""",
+                (school_id_key(school_id),),
             ).fetchone()
             if not book:
                 return api_error("Book not found.", 404)
             if not borrower:
                 return api_error("No active student or faculty member has that school ID.", 404)
+            if not has_active_face_time_in(connection, borrower["school_id"]):
+                return api_error(
+                    "Time In is required before borrowing. Ask the borrower to record attendance using face recognition.",
+                    409,
+                )
             if book["available_quantity"] < 1:
                 return api_error("There are no available copies of this book.", 409)
+            if has_active_book_loan(connection, borrower, book["id"]):
+                return api_error("This borrower already has an active loan for this book.", 409)
+            institutional_email = borrower["email"].strip().lower()
+            if len(institutional_email) > 254 or not INSTITUTIONAL_EMAIL_PATTERN.fullmatch(institutional_email):
+                return api_error("The borrower's institutional email is invalid.", 409)
             connection.execute(
                 """INSERT INTO book_transactions
                    (book_id, borrower_id, processed_by, borrower_school_id, borrower_name,
                     borrower_department, processor_school_id, processor_name, processor_department,
                     barcode, institutional_email, borrow_date, due_date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (book["id"], borrower["id"], g.user["id"], borrower["school_id"], borrower["name"],
                  borrower["department"], g.user["school_id"], g.user["name"], g.user["department"],
-                 book["barcode"], institutional_email, due_date),
+                 book["barcode"], institutional_email, manila_now(), due_date),
             )
             connection.execute("UPDATE books SET available_quantity = available_quantity - 1 WHERE id = ?", (book["id"],))
         return jsonify({"message": "Book borrowed."}), 201
     except IntegrityError:
         return api_error("Unable to create the transaction.", 409)
+
+
+def has_active_book_loan(connection, borrower, book_id):
+    rows = connection.execute(
+        """SELECT COALESCE(NULLIF(t.borrower_school_id, ''), u.school_id, '') AS school_id
+           FROM book_transactions t
+           LEFT JOIN users u ON u.id = t.borrower_id
+           WHERE t.book_id = ? AND t.status = 'borrowed'""",
+        (book_id,),
+    ).fetchall()
+    borrower_key = school_id_key(borrower["school_id"])
+    return any(school_id_key(row["school_id"]) == borrower_key for row in rows)
+
+
+def has_active_face_time_in(connection, school_id):
+    if not school_id or not school_id_key(school_id):
+        return False
+    attendance_school_id = "COALESCE(NULLIF(a.person_school_id, ''), u.school_id, '')"
+    attendance_school_id_key = school_id_sql_key(attendance_school_id)
+    return connection.execute(
+        f"""SELECT 1 FROM attendance_records a
+            LEFT JOIN users u ON u.id = a.person_id
+            WHERE {attendance_school_id_key} = ?
+              AND a.source = 'face_recognition'
+              AND a.time_in IS NOT NULL AND a.time_out IS NULL
+            LIMIT 1""",
+        (school_id_key(school_id),),
+    ).fetchone() is not None
 
 
 @app.post("/api/transactions/<int:transaction_id>/return")
@@ -1165,20 +1220,45 @@ def return_book(transaction_id):
     with get_connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         transaction = connection.execute(
-            "SELECT book_id, status FROM book_transactions WHERE id = ?", (transaction_id,)
+            """SELECT t.book_id, t.status,
+                      COALESCE(NULLIF(t.borrower_school_id, ''), u.school_id, '') AS borrower_school_id
+               FROM book_transactions t LEFT JOIN users u ON u.id = t.borrower_id
+               WHERE t.id = ?""",
+            (transaction_id,),
         ).fetchone()
         if not transaction:
             return api_error("Transaction not found.", 404)
         if transaction["status"] != "borrowed":
             return api_error("This book has already been returned.", 409)
+        if not has_active_face_time_in(connection, transaction["borrower_school_id"]):
+            return api_error(
+                "Time In is required before returning a book. Ask the borrower to record attendance using face recognition.",
+                409,
+            )
         connection.execute(
-            "UPDATE book_transactions SET status = 'returned', return_date = datetime('now', 'localtime') WHERE id = ?",
-            (transaction_id,),
+            "UPDATE book_transactions SET status = 'returned', return_date = ? WHERE id = ?",
+            (manila_now(), transaction_id),
         )
         connection.execute(
             "UPDATE books SET available_quantity = available_quantity + 1 WHERE id = ?", (transaction["book_id"],)
         )
     return jsonify({"message": "Book returned."})
+
+
+@app.delete("/api/transactions/<int:transaction_id>")
+@roles_required("MIS Admin")
+def delete_transaction(transaction_id):
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        transaction = connection.execute(
+            "SELECT status FROM book_transactions WHERE id = ?", (transaction_id,)
+        ).fetchone()
+        if not transaction:
+            return api_error("Borrower record not found.", 404)
+        if transaction["status"] != "returned":
+            return api_error("Return the book before deleting its borrower record.", 409)
+        connection.execute("DELETE FROM book_transactions WHERE id = ?", (transaction_id,))
+    return jsonify({"message": "Borrower record deleted."})
 
 
 @app.get("/api/reports")
@@ -1524,23 +1604,33 @@ def person_role_expression():
 def validate_person(data):
     school_id = clean_text(data, "school_id", 50)
     name = clean_text(data, "name")
-    person_role = clean_text(data, "role", 30)
-    if person_role not in ("Student", "Faculty", "Staff", "Other"):
+    institutional_email = clean_text(data, "institutional_email", 254).lower()
+    if not INSTITUTIONAL_EMAIL_PATTERN.fullmatch(institutional_email):
+        raise ValueError("The institutional email must end with @paterostechnologicalcollege.edu.ph.")
+    selected_role = clean_text(data, "role", 30)
+    if selected_role not in ("Student", "Faculty", "Staff", "Other"):
         raise ValueError("Choose Student, Faculty, Staff, or Other.")
+    person_role = selected_role
+    if selected_role == "Other":
+        other_role = data.get("other_role")
+        if not isinstance(other_role, str) or not other_role.strip():
+            raise ValueError("Enter a preferred role or category when choosing Other.")
+        person_role = other_role.strip()
+        if len(person_role) > 50:
+            raise ValueError("The other role or category is too long.")
     department = str(data.get("department", "")).strip()
-    contact = str(data.get("contact", "")).strip()
-    if len(department) > 100 or len(contact) > 80:
-        raise ValueError("Department or contact information is too long.")
+    if len(department) > 100:
+        raise ValueError("Department is too long.")
     status = str(data.get("status", "active")).strip().lower()
     if status not in ("active", "inactive"):
         raise ValueError("Status must be Active or Inactive.")
     return {
         "school_id": school_id,
         "name": name,
+        "institutional_email": institutional_email,
         "person_role": person_role,
         "role": person_role if person_role in ("Student", "Faculty") else "Student",
         "department": department,
-        "contact": contact,
         "status": status,
     }
 
@@ -1550,20 +1640,32 @@ def validate_person(data):
 def list_people():
     search = f"%{request.args.get('q', '').strip()}%"
     person_role = request.args.get("role", "").strip()
+    role_expression = person_role_expression()
+    people_filter = f"""FROM users
+                        WHERE role NOT IN ('MIS Admin', 'Librarian')
+                          AND (school_id LIKE ? OR name LIKE ? OR department LIKE ?
+                               OR {role_expression} LIKE ? OR email LIKE ?)
+                          AND (? = ''
+                               OR (? = 'Other' AND {role_expression} NOT IN ('Student', 'Faculty', 'Staff'))
+                               OR (? <> 'Other' AND {role_expression} = ?))"""
+    parameters = (
+        search, search, search, search, search,
+        person_role, person_role, person_role, person_role,
+    )
     with get_connection() as connection:
         rows = connection.execute(
-            f"""SELECT id, school_id, name, {person_role_expression()} AS role,
-                       department, contact, status, created_at,
+            f"""SELECT id, school_id, name, email AS institutional_email,
+                       {person_role_expression()} AS role, department, status, created_at,
                        CASE WHEN face_image = '' THEN 0 ELSE 1 END AS has_face_image,
                        CASE WHEN face_encoding = '' THEN 0 ELSE 1 END AS face_registered
-                FROM users
-                WHERE role NOT IN ('MIS Admin', 'Librarian')
-                  AND (school_id LIKE ? OR name LIKE ? OR department LIKE ? OR {person_role_expression()} LIKE ?)
-                  AND (? = '' OR {person_role_expression()} = ?)
+                {people_filter}
                 ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, lower(name)""",
-            (search, search, search, search, person_role, person_role),
+            parameters,
         ).fetchall()
-    return jsonify({"people": [dict(row) for row in rows]})
+        total = connection.execute(
+            "SELECT COUNT(*) FROM users WHERE role NOT IN ('MIS Admin', 'Librarian')"
+        ).fetchone()[0]
+    return jsonify({"people": [dict(row) for row in rows], "total": total})
 
 
 @app.post("/api/people")
@@ -1572,20 +1674,19 @@ def create_person():
     data = request.get_json(silent=True) or {}
     try:
         person = validate_person(data)
-        email = person["school_id"].lower() + "@paterostechnologicalcollege.edu.ph"
         with get_connection() as connection:
             cursor = connection.execute(
                 """INSERT INTO users
-                   (school_id, name, email, role, person_type, department, contact, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (person["school_id"], person["name"], email, person["role"], person["person_role"],
-                 person["department"], person["contact"], person["status"]),
+                   (school_id, name, email, role, person_type, department, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (person["school_id"], person["name"], person["institutional_email"],
+                 person["role"], person["person_role"], person["department"], person["status"]),
             )
         return jsonify({"id": cursor.lastrowid, "message": "People information saved."}), 201
     except (ValueError, TypeError) as error:
         return api_error(str(error))
     except IntegrityError:
-        return api_error("That School ID is already registered.", 409)
+        return api_error("That School ID or institutional email is already registered.", 409)
 
 
 @app.put("/api/people/<int:person_id>")
@@ -1601,10 +1702,10 @@ def update_person(person_id):
             if not current or current["role"] in ("MIS Admin", "Librarian"):
                 return api_error("People record not found.", 404)
             connection.execute(
-                """UPDATE users SET school_id = ?, name = ?, role = ?, person_type = ?,
-                   department = ?, contact = ?, status = ? WHERE id = ?""",
-                (person["school_id"], person["name"], person["role"], person["person_role"],
-                 person["department"], person["contact"], person["status"], person_id),
+                """UPDATE users SET school_id = ?, name = ?, email = ?, role = ?, person_type = ?,
+                   department = ?, status = ? WHERE id = ?""",
+                (person["school_id"], person["name"], person["institutional_email"], person["role"],
+                 person["person_role"], person["department"], person["status"], person_id),
             )
             if person["status"] == "inactive":
                 timestamp = manila_now()
@@ -1617,7 +1718,10 @@ def update_person(person_id):
     except (ValueError, TypeError) as error:
         return api_error(str(error))
     except IntegrityError:
-        return api_error("That School ID is already registered.", 409)
+        return api_error("That School ID or institutional email is already registered.", 409)
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1653,9 +1757,8 @@ EXACT_HEADERS = {
     "role": ("role", "persontype", "usertype", "type", "category", "position", "designation"),
     "department": ("department", "dept", "program", "course", "courseprogram", "courseorprogram",
                    "programcourse", "college", "departmentcourse"),
-    "contact": ("contact", "contactno", "contactnumber", "contactinformation", "phone", "phoneno",
-                "phonenumber", "mobile", "mobileno", "mobilenumber", "cellphone", "cellphonenumber",
-                "cp", "cpno", "telephone"),
+    "institutional_email": ("institutionalemail", "institutionalemailaddress", "email",
+                            "emailaddress", "school email"),
     "status": ("status", "accountstatus", "personstatus", "enrollmentstatus", "enrolmentstatus",
                "studentstatus"),
 }
@@ -1664,7 +1767,7 @@ KEYWORD_HEADERS = (
     ("school_id", ("schoolid", "studentid", "studentno", "studentnumber", "employeeid",
                    "facultyid", "idnumber", "idno")),
     ("department", ("department", "dept", "program", "course", "college")),
-    ("contact", ("contact", "mobile", "phone", "telephone", "cellphone")),
+    ("institutional_email", ("institutionalemail", "email")),
     ("status", ("status",)),
     ("role", ("role", "persontype", "usertype")),
     ("name", ("fullname", "completename", "studentname", "facultyname", "employeename", "personname")),
@@ -1673,17 +1776,22 @@ KEYWORD_HEADERS = (
 # (e.g. "Father's Name", "Civil Status", "Emergency Contact No.", "Email Address").
 EXCLUDED_HEADER_WORDS = (
     "father", "mother", "guardian", "parent", "spouse", "emergency", "maiden", "civil", "marital",
-    "email", "address", "relationship", "birth", "yearlevel", "semester", "section", "schoolyear",
+    "address", "relationship", "birth", "yearlevel", "semester", "section", "schoolyear",
     "schoolname", "collegename", "contactperson",
 )
 FIELD_LABELS = {
     "school_id": "School ID", "name": "Name", "last_name": "Name (last name)",
     "first_name": "Name (first name)", "middle_name": "Name (middle name)", "suffix": "Name (suffix)",
-    "role": "Role", "department": "Department", "contact": "Contact", "status": "Status",
+    "institutional_email": "Institutional Email",
+    "role": "Role", "department": "Department", "status": "Status",
 }
 XLSX_MAIN = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 XLSX_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
-SQL_SCHOOL_ID_KEY = "REPLACE(REPLACE(REPLACE(REPLACE(LOWER(school_id), '-', ''), ' ', ''), '_', ''), '.', '')"
+def school_id_sql_key(column):
+    return f"REPLACE(REPLACE(REPLACE(REPLACE(LOWER({column}), '-', ''), ' ', ''), '_', ''), '.', '')"
+
+
+SQL_SCHOOL_ID_KEY = school_id_sql_key("school_id")
 
 
 def import_status(raw):
@@ -1975,7 +2083,7 @@ def import_people():
         return api_error(
             "Could not find the people columns in this file. A header row needs a School ID column "
             "(ID No., Student ID...) and a Name column (or First Name and Last Name). "
-            "Role, Department / Program, Contact and Status are optional. "
+            "Institutional Email, Role, Department / Program and Status are optional. "
             "Sheets checked: " + ", ".join(name for name, _ in sheets) + "."
         )
     header_row, columns, header_cells, data_rows = found
@@ -2013,17 +2121,26 @@ def import_people():
         known_people = {
             school_id_key(row["school_id"]): row
             for row in connection.execute(
-                "SELECT id, school_id, name, role, person_type, department, contact, status FROM users"
+                "SELECT id, school_id, name, email, role, person_type, department, status FROM users"
             )
         }
         for number, cells in data_rows:
             raw_role = (tidy(cell(cells, "role")) if "role" in columns else "") or "Student"
+            school_id = tidy(cell(cells, "school_id"))
+            key = school_id_key(school_id)
+            existing = known_people.get(key) if key else None
+            imported_email = tidy(cell(cells, "institutional_email"))
+            mapped_role = PERSON_ROLES.get(raw_role.lower(), raw_role)
             record = {
-                "school_id": tidy(cell(cells, "school_id")),
+                "school_id": school_id,
                 "name": person_name(cells),
-                "role": PERSON_ROLES.get(raw_role.lower(), raw_role),
+                "institutional_email": imported_email or (
+                    existing["email"] if existing
+                    else school_id.lower() + "@paterostechnologicalcollege.edu.ph"
+                ),
+                "role": mapped_role,
+                "other_role": "Other" if mapped_role == "Other" else "",
                 "department": tidy(cell(cells, "department")),
-                "contact": clean_contact(cell(cells, "contact")),
                 "status": import_status(tidy(cell(cells, "status"))),
             }
             try:
@@ -2042,25 +2159,24 @@ def import_people():
                 continue
             seen_ids.add(key)
 
-            existing = known_people.get(key)
             if existing:
                 if existing["role"] in ("MIS Admin", "Librarian"):
                     errors.append({"row": number, "school_id": person["school_id"],
                                    "reason": "This School ID belongs to a system account."})
                     continue
                 current = (existing["name"], existing["person_type"] or existing["role"],
-                           existing["department"], existing["contact"], existing["status"])
+                           existing["department"], existing["email"].lower(), existing["status"])
                 incoming = (person["name"], person["person_role"], person["department"],
-                            person["contact"], person["status"])
+                            person["institutional_email"], person["status"])
                 if current == incoming:
                     unchanged += 1
                     continue
                 # Face image / encoding are intentionally left untouched.
                 connection.execute(
-                    """UPDATE users SET name = ?, role = ?, person_type = ?, department = ?,
-                       contact = ?, status = ? WHERE id = ?""",
-                    (person["name"], person["role"], person["person_role"], person["department"],
-                     person["contact"], person["status"], existing["id"]),
+                    """UPDATE users SET name = ?, email = ?, role = ?, person_type = ?,
+                       department = ?, status = ? WHERE id = ?""",
+                    (person["name"], person["institutional_email"], person["role"],
+                     person["person_role"], person["department"], person["status"], existing["id"]),
                 )
                 if person["status"] == "inactive" and existing["status"] != "inactive":
                     connection.execute(
@@ -2070,19 +2186,18 @@ def import_people():
                     )
                 updated += 1
                 continue
-            email = person["school_id"].lower() + "@paterostechnologicalcollege.edu.ph"
             try:
                 connection.execute(
                     """INSERT INTO users
-                       (school_id, name, email, role, person_type, department, contact, status)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (person["school_id"], person["name"], email, person["role"], person["person_role"],
-                     person["department"], person["contact"], person["status"]),
+                       (school_id, name, email, role, person_type, department, status)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (person["school_id"], person["name"], person["institutional_email"],
+                     person["role"], person["person_role"], person["department"], person["status"]),
                 )
                 added += 1
             except IntegrityError:
                 errors.append({"row": number, "school_id": person["school_id"],
-                               "reason": "This School ID or its generated email is already in use."})
+                               "reason": "This School ID or institutional email is already in use."})
 
     return jsonify({
         "added": added,
@@ -2106,8 +2221,9 @@ def lookup_person():
         return api_error("Enter a School ID.")
     with get_connection() as connection:
         row = connection.execute(
-            f"""SELECT id, school_id, name, role AS account_role, {person_role_expression()} AS role,
-                       department, contact, status,
+            f"""SELECT id, school_id, name, email AS institutional_email,
+                       role AS account_role, {person_role_expression()} AS role,
+                       department, status,
                        CASE WHEN face_image = '' THEN 0 ELSE 1 END AS has_face_image,
                        CASE WHEN face_encoding = '' THEN 0 ELSE 1 END AS face_registered
                 FROM users WHERE {SQL_SCHOOL_ID_KEY} = ?""",
@@ -2368,6 +2484,217 @@ def permanently_delete_system_user(user_id):
         if not delete_user_preserving_history(connection, user_id):
             return api_error("System account not found.", 404)
     return jsonify({"message": "System account permanently deleted."})
+
+
+def iot_borrower_loans(connection, school_id):
+    rows = connection.execute(
+        """SELECT t.id, t.book_id, t.barcode, t.borrow_date, t.due_date, t.return_date,
+                  t.status, COALESCE(NULLIF(t.borrower_school_id, ''), u.school_id, '') AS borrower_school_id,
+                  COALESCE(NULLIF(t.borrower_name, ''), u.name, '') AS borrower_name,
+                  COALESCE(NULLIF(t.borrower_department, ''), u.department, '') AS borrower_department,
+                  t.institutional_email, b.book_number, b.title, b.author, b.category
+           FROM book_transactions t
+           JOIN books b ON b.id = t.book_id
+           LEFT JOIN users u ON u.id = t.borrower_id
+           WHERE t.status = 'borrowed' AND t.barcode != ''
+             AND REPLACE(REPLACE(REPLACE(REPLACE(LOWER(
+                 COALESCE(NULLIF(t.borrower_school_id, ''), u.school_id, '')),
+                 '-', ''), ' ', ''), '_', ''), '.', '') = ?""",
+        (school_id_key(school_id),),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.get("/api/iot/borrowers")
+@iot_required
+def iot_find_borrower():
+    school_id = request.args.get("school_id", "").strip()
+    if not school_id or not school_id_key(school_id):
+        return api_error("Enter a valid School ID.")
+    with get_connection() as connection:
+        person = connection.execute(
+            f"""SELECT id, school_id, name, email AS institutional_email,
+                       {person_role_expression()} AS role, department, status
+                FROM users WHERE {SQL_SCHOOL_ID_KEY} = ?
+                  AND role NOT IN ('MIS Admin', 'Librarian')""",
+            (school_id_key(school_id),),
+        ).fetchone()
+        loans = iot_borrower_loans(connection, school_id)
+        has_time_in = has_active_face_time_in(connection, school_id)
+    if person:
+        borrower = dict(person)
+    elif loans:
+        borrower = {
+            "id": None,
+            "school_id": loans[0]["borrower_school_id"],
+            "name": loans[0]["borrower_name"],
+            "institutional_email": loans[0]["institutional_email"],
+            "role": "",
+            "department": loans[0]["borrower_department"],
+            "status": "inactive",
+        }
+    else:
+        return api_error("No people information or active loans match this School ID.", 404)
+    borrower["has_active_time_in"] = has_time_in
+    return jsonify({"borrower": borrower, "borrowed_books": loans})
+
+
+@app.get("/api/iot/books/barcode")
+@iot_required
+def iot_find_book_by_barcode():
+    barcode = request.args.get("value", "").strip()
+    if not barcode or len(barcode) > 50:
+        return api_error("Scan or enter a valid book barcode.")
+    with get_connection() as connection:
+        book = connection.execute(
+            """SELECT id, book_number, barcode, title, author, category, available_quantity
+               FROM books WHERE barcode = ? AND status = 'active'""",
+            (barcode,),
+        ).fetchone()
+    if not book:
+        return api_error("Book not found.", 404)
+    return jsonify({"book": dict(book)})
+
+
+@app.post("/api/iot/transactions/borrow")
+@iot_required
+def iot_borrow_book():
+    data = request.get_json(silent=True) or {}
+    school_id = str(data.get("school_id", "")).strip()
+    barcode = str(data.get("barcode", "")).strip()
+    try:
+        due_date = str(
+            data.get("due_date")
+            or (datetime.now(MANILA_TIME).date() + timedelta(days=14)).isoformat()
+        )
+        date.fromisoformat(due_date)
+    except (ValueError, TypeError):
+        return api_error("Enter a valid due date.")
+    if not school_id or not school_id_key(school_id) or not barcode or len(barcode) > 50:
+        return api_error("A valid School ID and scanned book barcode are required.")
+
+    try:
+        with get_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            borrower = connection.execute(
+                f"""SELECT id, school_id, name, email, department,
+                           {person_role_expression()} AS role
+                    FROM users WHERE {SQL_SCHOOL_ID_KEY} = ?
+                      AND status = 'active' AND role IN ('Student', 'Faculty')""",
+                (school_id_key(school_id),),
+            ).fetchone()
+            book = connection.execute(
+                """SELECT id, book_number, barcode, title, available_quantity
+                   FROM books WHERE barcode = ? AND status = 'active'""",
+                (barcode,),
+            ).fetchone()
+            if not borrower:
+                return api_error("No active student or faculty member has that School ID.", 404)
+            if not has_active_face_time_in(connection, borrower["school_id"]):
+                return api_error(
+                    "Time In is required before borrowing. Ask the borrower to record attendance using face recognition.",
+                    409,
+                )
+            if not book:
+                return api_error("Book not found for the scanned barcode.", 404)
+            if book["available_quantity"] < 1:
+                return api_error("There are no available copies of this book.", 409)
+            if has_active_book_loan(connection, borrower, book["id"]):
+                return api_error("This borrower already has an active loan for this book.", 409)
+            institutional_email = borrower["email"].strip().lower()
+            if len(institutional_email) > 254 or not INSTITUTIONAL_EMAIL_PATTERN.fullmatch(institutional_email):
+                return api_error("The borrower's institutional email is invalid.", 409)
+            cursor = connection.execute(
+                """INSERT INTO book_transactions
+                   (book_id, borrower_id, borrower_school_id, borrower_name, borrower_department,
+                    processor_name, barcode, institutional_email, borrow_date, due_date)
+                   VALUES (?, ?, ?, ?, ?, 'Face Recognition Station', ?, ?, ?, ?)""",
+                (book["id"], borrower["id"], borrower["school_id"], borrower["name"],
+                 borrower["department"], book["barcode"], institutional_email, manila_now(), due_date),
+            )
+            connection.execute(
+                "UPDATE books SET available_quantity = available_quantity - 1 WHERE id = ?",
+                (book["id"],),
+            )
+        return jsonify({
+            "message": "Book borrowed.",
+            "transaction_id": cursor.lastrowid,
+            "borrower": {
+                "school_id": borrower["school_id"],
+                "name": borrower["name"],
+                "role": borrower["role"],
+                "department": borrower["department"],
+                "institutional_email": institutional_email,
+            },
+            "book": dict(book),
+            "due_date": due_date,
+        }), 201
+    except IntegrityError:
+        return api_error("Unable to create the transaction.", 409)
+
+
+@app.post("/api/iot/transactions/return")
+@iot_required
+def iot_return_book():
+    data = request.get_json(silent=True) or {}
+    school_id = str(data.get("school_id", "")).strip()
+    barcode = str(data.get("barcode", "")).strip()
+    if not school_id or not school_id_key(school_id) or not barcode or len(barcode) > 50:
+        return api_error("A valid School ID and scanned book barcode are required.")
+
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        rows = connection.execute(
+            """SELECT t.id, t.book_id,
+                      COALESCE(NULLIF(t.borrower_school_id, ''), u.school_id, '') AS borrower_school_id,
+                      COALESCE(NULLIF(t.borrower_name, ''), u.name, '') AS borrower_name,
+                      t.borrower_department, t.institutional_email, t.borrow_date,
+                      t.due_date, b.title, b.book_number, t.barcode
+               FROM book_transactions t
+               JOIN books b ON b.id = t.book_id
+               LEFT JOIN users u ON u.id = t.borrower_id
+               WHERE t.status = 'borrowed' AND t.barcode = ?""",
+            (barcode,),
+        ).fetchall()
+        matches = [
+            row for row in rows
+            if school_id_key(row["borrower_school_id"]) == school_id_key(school_id)
+        ]
+        if not matches:
+            return api_error("This barcode is not currently borrowed by that School ID.", 404)
+        if len(matches) > 1:
+            return api_error("Multiple active records match this barcode and School ID; ask MIS Admin to resolve them.", 409)
+        transaction = matches[0]
+        if not has_active_face_time_in(connection, transaction["borrower_school_id"]):
+            return api_error(
+                "Time In is required before returning a book. Ask the borrower to record attendance using face recognition.",
+                409,
+            )
+        returned_at = manila_now()
+        connection.execute(
+            "UPDATE book_transactions SET status = 'returned', return_date = ? WHERE id = ?",
+            (returned_at, transaction["id"]),
+        )
+        connection.execute(
+            "UPDATE books SET available_quantity = available_quantity + 1 WHERE id = ?",
+            (transaction["book_id"],),
+        )
+    return jsonify({
+        "message": "Book returned.",
+        "transaction_id": transaction["id"],
+        "borrower": {
+            "school_id": transaction["borrower_school_id"],
+            "name": transaction["borrower_name"],
+            "department": transaction["borrower_department"],
+            "institutional_email": transaction["institutional_email"],
+        },
+        "book": {
+            "book_number": transaction["book_number"],
+            "barcode": transaction["barcode"],
+            "title": transaction["title"],
+        },
+        "return_date": returned_at,
+    })
 
 
 @app.get("/api/iot/face-enrollments")
