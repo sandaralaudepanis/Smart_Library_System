@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 /smart_library.db
 /backend/uploads/
+/backend/models/
 /face_recognition_iot/.models/
 .venv/
 __pycache__/
