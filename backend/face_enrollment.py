@@ -4,11 +4,12 @@ Uses the same OpenCV YuNet (detection) and SFace (recognition) models as the cam
 station, with the same alignment and L2 normalisation, so encodings created here are
 interchangeable with the ones the station creates.
 
-Run `python backend/face_enrollment.py` during server setup to pre-download the models.
+Run `python backend/face_enrollment.py` during server setup to download and validate the models.
 """
 
 import math
 import os
+import shutil
 import threading
 import urllib.request
 from pathlib import Path
@@ -18,15 +19,18 @@ MODEL_DIRECTORY = Path(
 )
 MODEL_URLS = {
     "face_detection_yunet_2023mar.onnx": (
-        "https://github.com/opencv/opencv_zoo/raw/main/models/"
+        "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/"
         "face_detection_yunet/face_detection_yunet_2023mar.onnx"
     ),
     "face_recognition_sface_2021dec.onnx": (
-        "https://github.com/opencv/opencv_zoo/raw/main/models/"
+        "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/"
         "face_recognition_sface/face_recognition_sface_2021dec.onnx"
     ),
 }
-MIN_MODEL_BYTES = 100_000  # guards against saving an HTML/LFS-pointer error page as a model
+MIN_MODEL_BYTES = {
+    "face_detection_yunet_2023mar.onnx": 200_000,
+    "face_recognition_sface_2021dec.onnx": 30_000_000,
+}
 MAX_SIDE = 1280  # keeps memory use low on small servers
 ENCODING_SIZE = 128
 
@@ -43,23 +47,29 @@ _lock = threading.Lock()
 _engine = None
 
 
-def ensure_models(download=True):
+def _is_valid_model(path, minimum_size):
+    if not path.is_file() or path.stat().st_size < minimum_size:
+        return False
+    with path.open("rb") as model_file:
+        return not model_file.read(64).startswith(b"version https://git-lfs.github.com/spec/v1")
+
+
+def ensure_models(download=True, force_download=False):
     MODEL_DIRECTORY.mkdir(parents=True, exist_ok=True)
     paths = {}
     for name, url in MODEL_URLS.items():
         path = MODEL_DIRECTORY / name
-        if not path.is_file() or path.stat().st_size < MIN_MODEL_BYTES:
+        if force_download or not _is_valid_model(path, MIN_MODEL_BYTES[name]):
             if not download:
                 raise FaceEngineUnavailable(f"Face model {name} is missing.")
             temporary = path.with_suffix(".download")
             try:
-                with urllib.request.urlopen(url, timeout=120) as response, open(temporary, "wb") as output:
-                    while True:
-                        chunk = response.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        output.write(chunk)
-                if temporary.stat().st_size < MIN_MODEL_BYTES:
+                request = urllib.request.Request(
+                    url, headers={"User-Agent": "SmartLibraryFaceEnrollment/1.0"}
+                )
+                with urllib.request.urlopen(request, timeout=120) as response, temporary.open("wb") as output:
+                    shutil.copyfileobj(response, output)
+                if not _is_valid_model(temporary, MIN_MODEL_BYTES[name]):
                     raise FaceEngineUnavailable(f"Downloaded {name} is incomplete.")
                 temporary.replace(path)
             except FaceEngineUnavailable:
@@ -72,6 +82,21 @@ def ensure_models(download=True):
     return paths
 
 
+def _create_engine(cv2, paths):
+    try:
+        detector = cv2.FaceDetectorYN.create(
+            str(paths["face_detection_yunet_2023mar.onnx"]), "", (320, 320), 0.7, 0.3, 5000
+        )
+        recognizer = cv2.FaceRecognizerSF.create(
+            str(paths["face_recognition_sface_2021dec.onnx"]), ""
+        )
+    except cv2.error as error:
+        raise FaceEngineUnavailable("The face-recognition models could not be loaded.") from error
+    if detector is None or recognizer is None:
+        raise FaceEngineUnavailable("OpenCV could not initialize the face-recognition models.")
+    return cv2, detector, recognizer
+
+
 def _load_engine():
     global _engine
     if _engine is not None:
@@ -82,11 +107,11 @@ def _load_engine():
     except ImportError as error:
         raise FaceEngineUnavailable("OpenCV is not installed on the server.") from error
     paths = ensure_models()
-    detector = cv2.FaceDetectorYN.create(
-        str(paths["face_detection_yunet_2023mar.onnx"]), "", (320, 320), 0.7, 0.3, 5000
-    )
-    recognizer = cv2.FaceRecognizerSF.create(str(paths["face_recognition_sface_2021dec.onnx"]), "")
-    _engine = (cv2, detector, recognizer)
+    try:
+        _engine = _create_engine(cv2, paths)
+    except FaceEngineUnavailable:
+        paths = ensure_models(force_download=True)
+        _engine = _create_engine(cv2, paths)
     return _engine
 
 
@@ -143,7 +168,8 @@ if __name__ == "__main__":
     # Build-time hook: failing to download must not fail the whole deploy; the backend then
     # falls back to leaving faces pending for the camera station, as before.
     try:
-        ensure_models()
+        with _lock:
+            _load_engine()
         print("Face models ready in", MODEL_DIRECTORY)
     except FaceEngineUnavailable as error:
         print("WARNING:", error)
